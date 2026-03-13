@@ -1,0 +1,13 @@
+include(FetchContent)
+
+FetchContent_Declare(
+        googlebench
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG         v1.9.4
+)
+
+FetchContent_GetProperties(googlebench)
+if(NOT googlebench_POPULATED)
+    FetchContent_Populate(googlebench)
+    add_subdirectory(${googlebench_SOURCE_DIR} ${googlebench_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()

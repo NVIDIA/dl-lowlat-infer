@@ -1,0 +1,6 @@
+inheritance: true
+
+reviews:
+  auto_review:
+    base_branches:
+      - "oss-release"

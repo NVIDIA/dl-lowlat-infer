@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# check=skip=InvalidDefaultArgInFrom
+ARG BASE_IMAGE_WITH_TAG
+
+FROM ${BASE_IMAGE_WITH_TAG} AS base
+
+# Alternative user
+ARG USER_ID=0
+ARG USER_NAME=root
+ARG GROUP_ID=0
+ARG GROUP_NAME=root
+
+RUN (getent group ${GROUP_ID} || groupadd --gid ${GROUP_ID} ${GROUP_NAME}) && \
+    (getent passwd ${USER_ID} || useradd --gid ${GROUP_ID} --uid ${USER_ID} --create-home --no-log-init --shell /bin/bash ${USER_NAME}) && \
+    apt-get update && \
+    apt-get install -y sudo && \
+    adduser ${USER_NAME} sudo && \
+    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers.d/sudo_nvidia && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+USER ${USER_NAME}
+
+ENV PATH="/home/${USER_NAME}/.local/bin:$PATH"

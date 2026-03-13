@@ -1,0 +1,13 @@
+BasedOnStyle: Google
+ColumnLimit: 120
+BinPackArguments: false
+BinPackParameters: false
+AlignAfterOpenBracket: AlwaysBreak
+SortIncludes: true
+IncludeCategories:
+  - Regex: '^<.*>'
+    Priority: 1
+  - Regex: '^<.*\.h(pp)?>'
+    Priority: 2
+  - Regex: '^".*'
+    Priority: 3

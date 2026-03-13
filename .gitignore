@@ -1,0 +1,14 @@
+# VS Code
+/.vscode/
+/.cache/
+
+# Build directory
+/build*/
+
+# Output directory
+/output*/
+
+# Kernel module for gdrcopy
+/gdrdrv/mod-*/gdrdrv.ko
+# Models data
+/data*/
