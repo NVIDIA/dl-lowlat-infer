@@ -23,6 +23,18 @@ cmake -DCMAKE_BUILD_TYPE=Release -DCPU_ARCH=native -DCMAKE_CUDA_ARCHITECTURES="9
 cmake --build build --parallel
 ```
 
+### Build Options
+
+Key CMake options:
+
+* `CMAKE_BUILD_TYPE`: Build type (Release or Debug)
+* `CPU_ARCH`: Target CPU architecture (default: `icelake-server`, use `native` for current CPU)
+* `CMAKE_CUDA_ARCHITECTURES`: Target CUDA architecture (e.g., `"90a-real"`, `"100a-real"`, `"120a-real"`)
+* `CMAKE_INSTALL_PREFIX`: Installation directory for the `nvLstmInf` binary
+* `TBC_USE_MBARRIER`: Use mbarrier primitives for thread block cluster synchronization (default: OFF)
+
+To enable mbarrier optimization, add `-DTBC_USE_MBARRIER=ON` to the cmake configure command.
+
 ### Testing with CMake
 
 Tests can be run with `ctest` by using the generated `CTestTestfile.cmake` with

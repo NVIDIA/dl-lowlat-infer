@@ -65,6 +65,12 @@ if(USE_PCIE_OUTBOUND_ATOMICS)
     add_definitions("-DUSE_PCIE_OUTBOUND_ATOMICS")
 endif()
 
+option(TBC_USE_MBARRIER "Use mbarrier pattern for TBC inter-layer sync" OFF)
+if(TBC_USE_MBARRIER)
+    message(STATUS "TBC mbarrier optimization: Enabled")
+    add_definitions("-DTBC_USE_MBARRIER")
+endif()
+
 add_subdirectory(src/cpp/nvlstm_inf)
 add_subdirectory(src/python)
 #add_subdirectory(configs)

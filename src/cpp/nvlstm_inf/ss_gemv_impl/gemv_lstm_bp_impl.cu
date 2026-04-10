@@ -126,7 +126,7 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
 
   const int tid = cluster_id * WARP_GROUP_SIZE + group_idx;
 
-  const bool p = tid < NUM_UNITS;
+  const bool valid_unit = tid < NUM_UNITS;
 
   elem4_type weights[NUM_INPUTS_UP / NUM_GROUPS];
 
@@ -136,10 +136,10 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
   #pragma unroll
   for (int ii = 0; ii < NUM_INPUTS_PER_GROUP; ii++) {
     int i = group_id * NUM_INPUTS_PER_GROUP + ii;
-    weights[ii] = (p && (i < NUM_INPUTS) )?gmem_weights[i * NUM_UNITS + tid]: zero4;
+    weights[ii] = (valid_unit && (i < NUM_INPUTS) )?gmem_weights[i * NUM_UNITS + tid]: zero4;
   }
 
-  if (p) {
+  if (valid_unit) {
     gmem_weights = reinterpret_cast<elem4_type*>(params.gmem_weights[1]);
     #pragma unroll
     for (int ii = 0; ii < NUM_UNITS; ii++) {
@@ -154,7 +154,7 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
       auto gmem_c_in = reinterpret_cast<elem_type*>(params.gmem_c_in[ii]);
   #if GEMM_H_VECTORIZED == 1
       auto gmem_gemm_h = reinterpret_cast<elem4_type*>(params.gmem_gemm_h[ii]);
-      gemm_h[ii] = p?gmem_gemm_h[tid] : zero4;
+      gemm_h[ii] = valid_unit?gmem_gemm_h[tid] : zero4;
   #else
       union Vec4_t{
         elem_type x[4];
@@ -162,18 +162,18 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
       };
       Vec4_t val;
       auto gmem_gemm_h = reinterpret_cast<elem_type*>(params.gmem_gemm_h[ii]);
-      val.x[0] = p?gmem_gemm_h[tid] : zero;
-      val.x[1] = p?gmem_gemm_h[tid + 1 * NUM_UNITS] : zero;
-      val.x[2] = p?gmem_gemm_h[tid + 2 * NUM_UNITS] : zero;
-      val.x[3] = p?gmem_gemm_h[tid + 3 * NUM_UNITS] : zero;
+      val.x[0] = valid_unit?gmem_gemm_h[tid] : zero;
+      val.x[1] = valid_unit?gmem_gemm_h[tid + 1 * NUM_UNITS] : zero;
+      val.x[2] = valid_unit?gmem_gemm_h[tid + 2 * NUM_UNITS] : zero;
+      val.x[3] = valid_unit?gmem_gemm_h[tid + 3 * NUM_UNITS] : zero;
       gemm_h[ii] = val.x4;
   #endif
-      c_in[ii] = p?gmem_c_in[tid] : 0;
+      c_in[ii] = valid_unit?gmem_c_in[tid] : 0;
     }
-    bias[ii] = p?gmem_biases[tid] : zero4;
+    bias[ii] = valid_unit?gmem_biases[tid] : zero4;
   }
 
-  dot_product_weight = p? gmem_dot_product_weights[tid] : 0.0f;
+  dot_product_weight = valid_unit? gmem_dot_product_weights[tid] : 0.0f;
 
   // notify host that we are ready for compute
   gpu_cpu_sync_part_0(params.host_ld_complete, block);
@@ -231,7 +231,7 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
                                  : reinterpret_cast<elem_type*>(params.gmem_c_in[ii]);
   #if GEMM_H_VECTORIZED == 1
       auto gmem_gemm_h = reinterpret_cast<elem4_type*>(params.gmem_gemm_h[ii]);
-      gemm_h[ii] = p?gmem_gemm_h[tid] : zero4;
+      gemm_h[ii] = valid_unit?gmem_gemm_h[tid] : zero4;
   #else
       union Vec4_t{
         elem_type x[4];
@@ -239,13 +239,13 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
       };
       Vec4_t val;
       auto gmem_gemm_h = reinterpret_cast<elem_type*>(params.gmem_gemm_h[ii]);
-      val.x[0] = p?gmem_gemm_h[tid] : zero;
-      val.x[1] = p?gmem_gemm_h[tid + 1 * NUM_UNITS] : zero;
-      val.x[2] = p?gmem_gemm_h[tid + 2 * NUM_UNITS] : zero;
-      val.x[3] = p?gmem_gemm_h[tid + 3 * NUM_UNITS] : zero;
+      val.x[0] = valid_unit?gmem_gemm_h[tid] : zero;
+      val.x[1] = valid_unit?gmem_gemm_h[tid + 1 * NUM_UNITS] : zero;
+      val.x[2] = valid_unit?gmem_gemm_h[tid + 2 * NUM_UNITS] : zero;
+      val.x[3] = valid_unit?gmem_gemm_h[tid + 3 * NUM_UNITS] : zero;
       gemm_h[ii] = val.x4;
   #endif
-      c_in[ii] = p?gmem_c_in[tid] : 0;
+      c_in[ii] = valid_unit?gmem_c_in[tid] : 0;
     }
 
 #if AS_STATES_LD_BAR == 1
@@ -335,7 +335,7 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
 
 #if DEBUG_OUTPUTS == 1
     assert(params.always_spin == 0);
-    if (p) gmem_c_out[threadIdx.x] = from_float<DATA_KIND>(cx);
+    if (valid_unit) gmem_c_out[threadIdx.x] = from_float<DATA_KIND>(cx);
 #endif
   }
 
@@ -396,7 +396,7 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
     lstm_eltwise<DATA_KIND>(hx, cx, acc, c_in[1]);
 
   #if DEBUG_OUTPUTS == 1
-    if (p) {
+    if (valid_unit) {
       gmem_c_out[tid] = from_float<DATA_KIND>(cx);
       gmem_h_out[tid] = from_float<DATA_KIND>(hx);
     }
@@ -409,7 +409,7 @@ __global__ void gemv_lstm_s_bpt_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, N
 
   if (cluster_idx < MAX_WARP_SIZE_GROUP_SIZE) {
 
-    dot_product = (p && cluster_idx < WARP_GROUP_SIZE)? dot_product_weight * hx : 0.0f;
+    dot_product = (valid_unit && cluster_idx < WARP_GROUP_SIZE)? dot_product_weight * hx : 0.0f;
 
     #pragma unroll
     for (int offset = MIN_WARP_SIZE_GROUP_SIZE / 2; offset > 0; offset /= 2) {

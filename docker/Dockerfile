@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.5
 ARG NGC_IMAGE=nvcr.io/nvidia/cuda
-ARG NGC_TAG=13.0.2-cudnn-devel-ubuntu24.04
+ARG NGC_TAG=13.2.0-cudnn-devel-ubuntu24.04
 ARG APP_DIR=/app/dl-lowlat-infer
 
 FROM ${NGC_IMAGE}:${NGC_TAG} as develop

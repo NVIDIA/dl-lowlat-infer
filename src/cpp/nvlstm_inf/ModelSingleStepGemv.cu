@@ -53,7 +53,7 @@ ModelSingleStepGemv<TData>::ModelSingleStepGemv(CudaEnv &cuda_env, const ModelDe
   dev_biases_.resize(num_layers_);
 
   if (num_features_ == LSTM_L_NUM_INPUTS) {
-    dev_input_buf_ = cex::Malloc<data_type>(std::max(num_features_, num_units_));
+    dev_input_buf_ = cex::Malloc<data_type>(2 * std::max(num_features_, num_units_));
   }
 
   std::vector<TData> tmp_h(kNumGates * std::max(num_units_, num_features_) * num_units_);

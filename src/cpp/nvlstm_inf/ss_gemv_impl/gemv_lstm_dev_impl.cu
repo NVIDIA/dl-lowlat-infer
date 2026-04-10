@@ -17,9 +17,6 @@
 
 namespace nvidia::quant::lowlat_infer::ssgemv {
 
-#define DEV_TBC_BROADCAST_INPUT 0
-#define DEV_BROADCAST_INPUT 1
-
 #define DEV_TIME_OVERHEAD_EXP 0
 
 
@@ -84,10 +81,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
   auto shared_sum 
     = reinterpret_cast<elem4_type*>(smem_weights + WEIGHT_INPUTS * WARP_GROUP_SIZE);
 
-  // elem_type* smem_input[2];
-  // smem_input[0] = reinterpret_cast<elem_type*>(shared_sum + BLOCK_THREADS);
-  // smem_input[1] = smem_input[0] + NUM_FEATURES_UP;
-  auto smem_input = reinterpret_cast<elem_type*>(shared_sum + BLOCK_THREADS);;
+  auto smem_input = reinterpret_cast<elem_type*>(shared_sum + BLOCK_THREADS);
 
   constexpr auto zero4 = data_type::zero4;
 #if GEMM_H_VECTORIZED == 0
@@ -96,7 +90,6 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
 
   auto gmem_input = reinterpret_cast<elem_type*>(params.gmem_input);
   auto gmem_h_out = reinterpret_cast<elem_type*>(params.gmem_h_out);
-  auto gmem_h_out_float = reinterpret_cast<float*>(params.gmem_h_out);
   auto gmem_dot_product_weights = reinterpret_cast<float*>(params.gmem_dot_prod_weights);
 
   elem4_type weights[NUM_FEATURES_UP / NUM_GROUPS];
@@ -119,9 +112,9 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
 
   grid.sync();
 
-  const bool p = tid < NUM_UNITS;
+  const bool valid_unit = tid < NUM_UNITS;
 
-  float dot_product_weight = p? gmem_dot_product_weights[tid] : 0.0f;
+  float dot_product_weight = valid_unit? gmem_dot_product_weights[tid] : 0.0f;
 
   auto gmem_weights = reinterpret_cast<elem4_type*>(params.gmem_weights[0]);
 
@@ -134,13 +127,13 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
     int i = group_id * NUM_INPUTS_PER_GROUP + ii;
     if (NUM_INPUTS % NUM_GROUPS != 0)
       if (i >= NUM_INPUTS) continue;
-    weights[ii] = (p && (i < NUM_INPUTS) 
+    weights[ii] = (valid_unit && (i < NUM_INPUTS)
                      // handle the case when WARP_SIZE % WARP_GROUP_SIZE != 0
                      && (lane_id < WARP_GROUP_SIZE * NUM_SUBWARP_GROUPS) )?
                       gmem_weights[i * NUM_UNITS + tid]: zero4;
   }
 
-  if (p && threadIdx.x < WARP_GROUP_SIZE) {
+  if (valid_unit && threadIdx.x < WARP_GROUP_SIZE) {
     auto s_weights = smem_weights;
     
     // load therest to smem
@@ -154,7 +147,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
     }
   }
 
-  if (p) {
+  if (valid_unit) {
     #pragma unroll
     for (int ll = 0; ll < NUM_LAYERS; ll++) {
       auto gmem_biases = reinterpret_cast<elem4_type*>(params.gmem_biases[ll]);
@@ -188,6 +181,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
   auto s_exit = reinterpret_cast<uint32_t *>(smem_input + NUM_FEATURES_UP);
 
   bool odd_step = false;
+  int ibuf = 0;
   #if DISABLE_ATOMIC_EXCHANGE == 1
   uint32_t device_spin_switch = SIGNAL_SWITCH_INIT_VALUE;
   #endif
@@ -212,6 +206,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
       return;
     } else if (*s_exit == DEVICE_SPIN_UNTIL_INIT_SIGNAL_VALUE){
       odd_step = false;
+      ibuf = 0;
 #if AS_STATES_LD_BAR == 1
       // workaround - we must continue with preprocess to signal states load after the initX/reset
 #if DISABLE_ATOMIC_EXCHANGE == 1
@@ -232,7 +227,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
                                  : reinterpret_cast<elem_type*>(params.gmem_c_in[ii]);
   #if GEMM_H_VECTORIZED == 1
       auto gmem_gemm_h = reinterpret_cast<elem4_type*>(params.gmem_gemm_h[ii]);
-      gemm_h[ii] = p?gmem_gemm_h[tid] : zero4;
+      gemm_h[ii] = valid_unit?gmem_gemm_h[tid] : zero4;
   #else
       union Vec4_t{
         elem_type x[4];
@@ -240,13 +235,13 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
       };
       Vec4_t val;
       auto gmem_gemm_h = reinterpret_cast<elem_type*>(params.gmem_gemm_h[ii]);
-      val.x[0] = p?gmem_gemm_h[tid] : zero;
-      val.x[1] = p?gmem_gemm_h[tid + 1 * NUM_UNITS] : zero;
-      val.x[2] = p?gmem_gemm_h[tid + 2 * NUM_UNITS] : zero;
-      val.x[3] = p?gmem_gemm_h[tid + 3 * NUM_UNITS] : zero;
+      val.x[0] = valid_unit?gmem_gemm_h[tid] : zero;
+      val.x[1] = valid_unit?gmem_gemm_h[tid + 1 * NUM_UNITS] : zero;
+      val.x[2] = valid_unit?gmem_gemm_h[tid + 2 * NUM_UNITS] : zero;
+      val.x[3] = valid_unit?gmem_gemm_h[tid + 3 * NUM_UNITS] : zero;
       gemm_h[ii] = val.x4;
   #endif
-      c_in[ii] = p?gmem_c_in[tid] : 0;
+      c_in[ii] = valid_unit?gmem_c_in[tid] : 0;
     }
 
 #if AS_STATES_LD_BAR == 1
@@ -266,7 +261,9 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
     dev_early_exit(params.host_ld_complete, grid);
   #endif
 
-  #if DEV_BROADCAST_INPUT == 1
+    ibuf = 0;
+    auto gmem_h_out_cur = gmem_h_out + ibuf * NUM_FEATURES;
+
     if (blockIdx.x == 0) {
       if (STAGE == false) {
         auto host_addr = reinterpret_cast<elem_type**>(params.host_addr);
@@ -279,13 +276,13 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
         #pragma unroll
         for (int ii = threadIdx.x; ii < NUM_INPUTS; ii += BLOCK_THREADS) {
           smem_input[ii] = (*smem_host_ptr)[ii];
-          gmem_h_out[ii] = smem_input[ii];
+          gmem_h_out_cur[ii] = smem_input[ii];
         }
       } else {
         #pragma unroll
         for (int ii = threadIdx.x; ii < NUM_INPUTS; ii += BLOCK_THREADS) {
           smem_input[ii] = __ldcv(&gmem_input[ii]);
-          gmem_h_out[ii] = smem_input[ii];
+          gmem_h_out_cur[ii] = smem_input[ii];
         }
       }
       //__syncthreads();
@@ -295,20 +292,10 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
 
     if (blockIdx.x != 0) {
       for (int ii = threadIdx.x; ii < NUM_INPUTS; ii += BLOCK_THREADS) {
-        smem_input[ii] = gmem_h_out[ii];
+        smem_input[ii] = gmem_h_out_cur[ii];
       }
     }
     __syncthreads();
-
-  #else
-    // should use only for testing
-    assert(STAGE == true);
-    #pragma unroll
-    for (int ii = threadIdx.x; ii < NUM_INPUTS; ii += BLOCK_THREADS) {
-      smem_input[ii] = gmem_input[ii];
-    }
-    __syncthreads();
-  #endif // DEV_BROADCAST_INPUT
 
     auto acc = zero4;
 
@@ -359,21 +346,19 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
 
   #if DEBUG_OUTPUTS == 1
       auto gmem_c_out = reinterpret_cast<elem_type*>(params.gmem_c_out[0]);
-      if (p) gmem_c_out[tid] = from_float<DATA_KIND>(cx);
+      if (valid_unit) gmem_c_out[tid] = from_float<DATA_KIND>(cx);
   #endif
 
     }
     __syncthreads();
 
-    __threadfence();
     if (NUM_LAYERS > 1) {
       if (threadIdx.x < WARP_GROUP_SIZE) {
-        if (p) {
-          __stcg(&gmem_h_out[tid], from_float<DATA_KIND>(hx));
-          //gmem_h_out[tid] = from_float<DATA_KIND>(hx);
+        if (valid_unit) {
+          __stcg(&gmem_h_out_cur[tid], from_float<DATA_KIND>(hx));
         }
       }
-    } else {// NUM_LAYERS > 1 
+    } else {// NUM_LAYERS > 1
       grid.sync();
     }
 
@@ -388,8 +373,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
       // load the input vector
       #pragma unroll
       for (int ii = threadIdx.x; ii < NUM_UNITS; ii += BLOCK_THREADS) {
-        //smem_input[ibuf][ii] = gmem_h_out[ii];
-        smem_input[ii] = __ldcg(&gmem_h_out[ii]);
+        smem_input[ii] = __ldcg(&gmem_h_out_cur[ii]);
       }
       __syncthreads();
 
@@ -398,7 +382,6 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
         int i = group_id * NUM_UNITS_PER_GROUP + ii;
         if (NUM_UNITS % NUM_GROUPS != 0)
           if (i >= NUM_UNITS) continue;
-        //acc = fma4<DATA_KIND>(weights[ii], smem_input[ibuf][i], acc);
         acc = fma4<DATA_KIND>(s_weights[i * WARP_GROUP_SIZE + group_idx], smem_input[i], acc);
       }
 
@@ -443,19 +426,18 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
       }
       __syncthreads();
 
-      __threadfence();
+      ibuf ^= 1;
+      gmem_h_out_cur = gmem_h_out + ibuf * NUM_FEATURES;
       if (ll < NUM_LAYERS-1) {
         // broadcast hidden state to all the SMs in the cluster
-        //gmem_h_out[tid] = from_float<DATA_KIND>(hx);
         if (threadIdx.x < WARP_GROUP_SIZE) {
-          if (p)__stcg(&gmem_h_out[tid], from_float<DATA_KIND>(hx));
+          if (valid_unit) __stcg(&gmem_h_out_cur[tid], from_float<DATA_KIND>(hx));
         }
       }
 #if DEBUG_OUTPUTS == 1
       else {
-        //gmem_h_out[tid] = from_float<DATA_KIND>(hx);
         if (threadIdx.x < WARP_GROUP_SIZE) {
-          if (p) __stcg(&gmem_h_out[tid], from_float<DATA_KIND>(hx));
+          if (valid_unit) __stcg(&gmem_h_out_cur[tid], from_float<DATA_KIND>(hx));
         }
       }
       auto gmem_c_out = reinterpret_cast<elem_type*>(params.gmem_c_out[ll]);
@@ -466,6 +448,10 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
     // Below we need to find the scallar product between dot_prod weights and hx
     enum { MIN_WARP_SIZE_GROUP_SIZE = Min<WARP_GROUP_SIZE, WARP_SIZE>::VALUE };
     enum { NUM_WARPS_IN_GROUP = Div_up<WARP_GROUP_SIZE, WARP_SIZE>::VALUE };
+    static_assert(NUM_FEATURES * sizeof(elem_type) >=
+                  Div_up<NUM_UNITS, WARP_GROUP_SIZE>::VALUE * sizeof(float),
+                  "gmem_h_out sub-buffer too small for dot-product scratch");
+    auto gmem_h_out_float_cur = reinterpret_cast<float*>(gmem_h_out_cur);
     float dot_product = 0.f;
 
    // __syncthreads();
@@ -476,7 +462,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
 
     if (threadIdx.x < MAX_WARP_SIZE_GROUP_SIZE) {
 
-      dot_product = (p && threadIdx.x < WARP_GROUP_SIZE)? dot_product_weight * hx : 0.0f;
+      dot_product = (valid_unit && threadIdx.x < WARP_GROUP_SIZE)? dot_product_weight * hx : 0.0f;
 
       #pragma unroll
       for (int offset = MIN_WARP_SIZE_GROUP_SIZE / 2; offset > 0; offset /= 2) {
@@ -501,7 +487,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
       }
 
   #if DEBUG_OUTPUTS == 0
-      gmem_h_out_float[grid_block_rank] = dot_product;
+      gmem_h_out_float_cur[grid_block_rank] = dot_product;
   #endif
     }
 
@@ -514,7 +500,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
     // 3) Block 0 performs the final reduction
     static_assert(BLOCK_THREADS >= 112);
     if (grid_block_rank == 0) {
-      dot_product = (threadIdx.x < gridDim.x)? gmem_h_out_float[threadIdx.x] : 0.0f;
+      dot_product = (threadIdx.x < gridDim.x)? gmem_h_out_float_cur[threadIdx.x] : 0.0f;
 
       #pragma unroll
       for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
@@ -651,7 +637,7 @@ void run_lstm_l_dev_t(Lstm_l_dev_t_params& params, Data_kind dtype, cudaStream_t
     params.host_addr == nullptr,             // stage
     params.always_spin != 0,                 // device_always_spin
     params.use_gdrcopy != 0,                 // gdrcopy_enabled
-    0,                                       // sm_arch ignored
+    params.sm_arch,                          // select heavy/light arch based on SM
     [&]<Arch A, Data_kind DT, bool S, bool P, bool G>() {
       launch_lstm_l_dev_t<A, DT, S, P, G>(params, stream);
     }
