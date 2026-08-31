@@ -135,7 +135,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
 
   if (valid_unit && threadIdx.x < WARP_GROUP_SIZE) {
     auto s_weights = smem_weights;
-    
+
     // load therest to smem
     for (int ll = 1; ll < NUM_LAYERS; ll++) {
       gmem_weights = reinterpret_cast<elem4_type*>(params.gmem_weights[ll]);
@@ -260,7 +260,7 @@ gemv_lstm_dev_subwarp_regbuf_t_kernel(Lstm_bpt_params<NUM_LAYERS, NUM_INPUTS, NU
   #if DEV_TIME_OVERHEAD_EXP == 1
     dev_early_exit(params.host_ld_complete, grid);
   #endif
-
+  
     ibuf = 0;
     auto gmem_h_out_cur = gmem_h_out + ibuf * NUM_FEATURES;
 

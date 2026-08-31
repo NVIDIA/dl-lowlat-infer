@@ -1,5 +1,7 @@
 # Low Latency inference for sliding window LSTMs
 
+Coding-agent instructions (build constraints, architecture, conventions): see [AGENTS.md](AGENTS.md). Claude Code loads the same content via [CLAUDE.md](CLAUDE.md).
+
 ## Obtaining the Source Code
 
 Note that this project stores some files in [Git Large File System](https://docs.gitlab.com/ee/topics/git/lfs/). Make sure to have a [Git LFS client](https://git-lfs.github.com/) installed when cloning this repository. On Ubuntu you can install the client by running
