@@ -34,10 +34,11 @@ class InferenceResult {
     ts_stop_.push_back(ts_stop);
   }
 
-  void AddBatch(std::uint32_t batch_size,
-                float const *output,
-                Clock::time_point const *ts_start,
-                Clock::time_point const &ts_stop);
+  void AddBatch(
+      std::uint32_t batch_size,
+      float const *output,
+      Clock::time_point const *ts_start,
+      Clock::time_point const &ts_stop);
 
   void Reserve(std::uint32_t batch_size);
 
@@ -48,6 +49,7 @@ class InferenceResult {
   [[nodiscard]] std::size_t Size() const { return output_.size(); }
   [[nodiscard]] Clock::duration Duration() const;
   [[nodiscard]] Clock::duration P99() const;
+  [[nodiscard]] Clock::duration P50() const;
 
   static double ToFracSeconds(Clock::time_point const &time_point, Clock::time_point const &base);
 
@@ -56,7 +58,6 @@ class InferenceResult {
   [[nodiscard]] auto const &TsStop() const { return ts_stop_; }
 
  private:
-
   std::vector<float> output_;
   std::vector<Clock::time_point> ts_start_;
   std::vector<Clock::time_point> ts_stop_;

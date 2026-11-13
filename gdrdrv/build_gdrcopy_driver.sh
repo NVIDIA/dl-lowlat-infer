@@ -7,8 +7,8 @@ set -e  # Exit on error
 set -u  # Exit on undefined variable
 
 # Set GDRCOPY_TAG to default if not specified
-# e.g. GDRCOPY_TAG=v2.5.1
-GDRCOPY_TAG="${GDRCOPY_TAG:-v2.5.1}"
+# e.g. GDRCOPY_TAG=v2.6
+GDRCOPY_TAG="${GDRCOPY_TAG:-v2.6}"
 
 # Check if kernel module already exists
 KERNEL_VERSION=$(uname -r)
@@ -55,4 +55,3 @@ rm -rf ${GDRCOPY_DIR}
 
 echo "Build completed successfully!"
 echo "Kernel module location: ${DRV_DIR}/gdrdrv.ko"
-

@@ -1,2 +1,9 @@
-[tool.black]
+[tool.ruff]
 line-length = 120
+
+[tool.ruff.lint]
+select = ["D", "E", "F", "I", "PLE", "W"]
+ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D417"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

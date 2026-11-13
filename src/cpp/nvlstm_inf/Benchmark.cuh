@@ -37,21 +37,22 @@ class Benchmark {
     SamplerType sampler_type = SamplerType::Random;
   };
 
-  Benchmark(std::filesystem::path const &path_data,
-            std::filesystem::path const &path_model,
-            SamplerConfig sampler_config,
-            std::uint32_t num_instances,
-            std::uint32_t batch_size = 1,
-            ModelConfig const &config = {},
-            bool stage = false,
-            bool reap = false,
-            util::CpuSet cpu_set = {},
-            std::chrono::nanoseconds grace_period = {},
-            std::optional<Clock::time_point> ts_base = std::nullopt,
-            std::optional<bool> use_omp = std::nullopt,
-            std::uint32_t clones = 1,
-            GreenContextsVector green_contexts = GreenContextsVector(),
-            bool use_precompute_green_context = false);
+  Benchmark(
+      std::filesystem::path const &path_data,
+      std::filesystem::path const &path_model,
+      SamplerConfig sampler_config,
+      std::uint32_t num_instances,
+      std::uint32_t batch_size = 1,
+      ModelConfig const &config = {},
+      bool stage = false,
+      bool reap = false,
+      util::CpuSet cpu_set = {},
+      std::chrono::nanoseconds grace_period = {},
+      std::optional<Clock::time_point> ts_base = std::nullopt,
+      std::optional<bool> use_omp = std::nullopt,
+      std::uint32_t clones = 1,
+      GreenContextsVector green_contexts = GreenContextsVector(),
+      bool use_precompute_green_context = false);
 
   void Run(std::uint32_t num_seconds, std::uint32_t log_seconds = 0);
 
@@ -91,26 +92,25 @@ class Benchmark {
 
   [[nodiscard]] auto TsBase() const { return ts_base_; }
 
-  static void Save(std::filesystem::path const &base_path,
-                   ResultVector const &results,
-                   Clock::time_point const &ts_base);
+  static void Save(
+      std::filesystem::path const &base_path, ResultVector const &results, Clock::time_point const &ts_base);
 
  private:
   void StartReaper();
 
-  std::unique_ptr<ModelInstance> InitModel(SamplerConfig sampler_config,
-                                           std::uint32_t batch_size,
-                                           ModelConfig const &config,
-                                           bool stage,
-                                           bool reap,
-                                           std::optional<bool> use_omp,
-                                           cex::PinnedTensor16 const &data16,
-                                           cex::PinnedTensor32 const &data32,
-                                           const ModelDef &model_def,
-                                           std::uint32_t clones,
-                                           size_t i);
+  std::unique_ptr<ModelInstance> InitModel(
+      SamplerConfig sampler_config,
+      std::uint32_t batch_size,
+      ModelConfig const &config,
+      bool stage,
+      bool reap,
+      std::optional<bool> use_omp,
+      cex::PinnedTensor16 const &data16,
+      cex::PinnedTensor32 const &data32,
+      const ModelDef &model_def,
+      std::uint32_t clones,
+      size_t i);
 
-  
   GreenContextsVector green_contexts_;
   std::vector<std::unique_ptr<CudaEnv>> cuda_envs_{};
   std::vector<std::unique_ptr<ModelInstance>> models_;
@@ -123,9 +123,9 @@ class Benchmark {
 
   std::chrono::nanoseconds const grace_period_;
 
-  bool use_green_contexts_ {false};
-  // use defferent context from inference for the precompute
-  bool use_precompute_green_context_ {false};
+  bool use_green_contexts_{false};
+  // use different context from inference for the precompute
+  bool use_precompute_green_context_{false};
   bool use_threads_in_models_{false};
 };
 

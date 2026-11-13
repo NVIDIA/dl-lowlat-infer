@@ -6,9 +6,7 @@
 /* clang-format on */
 
 #include <gtest/gtest.h>
-
 #include <nvlstm_inf/ModelDef.h>
-
 
 #ifndef TEST_RESOURCES_DIR
 #error "Define TEST_RESOURCES_DIR"
@@ -60,36 +58,36 @@ TEST(ModelDef, Load) {
   EXPECT_EQ(model_def.OffsetB('o', false), 96);
   EXPECT_EQ(model_def.OffsetB('o', true), 480);
   EXPECT_EQ(model_def.OffsetB('f', false), 192);
-  EXPECT_EQ(model_def.OffsetB('f', true), 6*96);
+  EXPECT_EQ(model_def.OffsetB('f', true), 6 * 96);
   EXPECT_EQ(model_def.OffsetB('c', false), 288);
-  EXPECT_EQ(model_def.OffsetB('c', true), 7*96);
+  EXPECT_EQ(model_def.OffsetB('c', true), 7 * 96);
 }
 
 TEST(ModelDef, Flops) {
   std::filesystem::path model_dir(TEST_RESOURCES_DIR);
 
-  ModelDef model_A{(model_dir / "lstm_s").c_str()};
-  EXPECT_EQ(model_A.Flops(2, 2), 20'717'760);
-  ModelDef model_B{(model_dir / "lstm_m").c_str()};
-  EXPECT_EQ(model_B.Flops(2, 2), 122'911'040);
-  ModelDef model_C{(model_dir / "lstm_l").c_str()};
-  EXPECT_EQ(model_C.Flops(2, 2), 4'277'044'672);
+  ModelDef model_s{(model_dir / "lstm_s").c_str()};
+  EXPECT_EQ(model_s.Flops(2, 2), 20'717'760);
+  ModelDef model_m{(model_dir / "lstm_m").c_str()};
+  EXPECT_EQ(model_m.Flops(2, 2), 122'911'040);
+  ModelDef model_l{(model_dir / "lstm_l").c_str()};
+  EXPECT_EQ(model_l.Flops(2, 2), 4'277'044'672);
 }
 
 TEST(ModelDef, SerialSolNanos) {
   std::filesystem::path model_dir(TEST_RESOURCES_DIR);
-  
+
   auto constexpr gemm = 156000;
   auto constexpr other = 19500;
   auto constexpr cost_activation = 2;
-  ModelDef model_A{(model_dir / "lstm_s").c_str()};
-  ModelDef model_B{(model_dir / "lstm_m").c_str()};
-  ModelDef model_C{(model_dir / "lstm_l").c_str()};
-  EXPECT_EQ(static_cast<int>(model_A.SerialSolNanos(gemm, other, cost_activation, cost_activation)), 565);
-  EXPECT_EQ(static_cast<int>(model_B.SerialSolNanos(gemm, other, cost_activation, cost_activation)), 3470);
-  EXPECT_EQ(static_cast<int>(model_C.SerialSolNanos(gemm, other, cost_activation, cost_activation)), 127272);
+  ModelDef model_s{(model_dir / "lstm_s").c_str()};
+  ModelDef model_m{(model_dir / "lstm_m").c_str()};
+  ModelDef model_l{(model_dir / "lstm_l").c_str()};
+  EXPECT_EQ(static_cast<int>(model_s.SerialSolNanos(gemm, other, cost_activation, cost_activation)), 565);
+  EXPECT_EQ(static_cast<int>(model_m.SerialSolNanos(gemm, other, cost_activation, cost_activation)), 3470);
+  EXPECT_EQ(static_cast<int>(model_l.SerialSolNanos(gemm, other, cost_activation, cost_activation)), 127272);
 
-  EXPECT_EQ(static_cast<int>(model_A.FlopsPerNanoSol(gemm, other, cost_activation, cost_activation)), 36611);
-  EXPECT_EQ(static_cast<int>(model_B.FlopsPerNanoSol(gemm, other, cost_activation, cost_activation)), 35415);
-  EXPECT_EQ(static_cast<int>(model_C.FlopsPerNanoSol(gemm, other, cost_activation, cost_activation)), 33605);
+  EXPECT_EQ(static_cast<int>(model_s.FlopsPerNanoSol(gemm, other, cost_activation, cost_activation)), 36611);
+  EXPECT_EQ(static_cast<int>(model_m.FlopsPerNanoSol(gemm, other, cost_activation, cost_activation)), 35415);
+  EXPECT_EQ(static_cast<int>(model_l.FlopsPerNanoSol(gemm, other, cost_activation, cost_activation)), 33605);
 }

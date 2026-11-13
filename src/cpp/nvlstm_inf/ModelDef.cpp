@@ -5,6 +5,8 @@
  */
 /* clang-format on */
 
+#include "ModelDef.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -13,22 +15,19 @@
 #include <string>
 #include <utility>
 
-#include "ModelDef.h"
 #include "util.h"
 
 using namespace nvidia::quant::lowlat_infer;
 
 namespace {
 
-util::Tensor32 LoadLstm(std::filesystem::path const &model_path,
-                      std::string const &prefix,
-                      std::size_t level,
-                      std::string const &suffix) {
+util::Tensor32 LoadLstm(
+    std::filesystem::path const &model_path, std::string const &prefix, std::size_t level, std::string const &suffix) {
   auto filename = prefix + std::to_string(level) + suffix;
   return util::Tensor32::Load(model_path / filename);
 }
 
-}
+}  // namespace
 
 ModelDef::ModelDef(const char *model_dir, bool skip_weights) {
   std::filesystem::path model_path{model_dir};
@@ -81,16 +80,18 @@ ModelDef::ModelDef(
     ModelDef::LstmTensors &&lstm_R,
     ModelDef::LstmTensors &&lstm_B,
     util::Tensor32 &&mat_mul,
-    float bias) :
-    num_steps_{num_steps}, num_features_{num_features},
-    lstm_W_{std::move(lstm_W)}, lstm_R_{std::move(lstm_R)}, lstm_B_{std::move(lstm_B)},
-    mat_mul_{std::move(mat_mul)}, bias_{bias} {
+    float bias)
+    : num_steps_{num_steps},
+      num_features_{num_features},
+      lstm_W_{std::move(lstm_W)},
+      lstm_R_{std::move(lstm_R)},
+      lstm_B_{std::move(lstm_B)},
+      mat_mul_{std::move(mat_mul)},
+      bias_{bias} {
   Check();
 }
 
-bool ModelDef::HasBias() const {
-  return !std::isnan(bias_);
-}
+bool ModelDef::HasBias() const { return !std::isnan(bias_); }
 
 std::uint32_t ModelDef::NumUnits() const {
   if (NumLayers() == 0) return NumFeatures() * NumSteps();
@@ -101,14 +102,12 @@ std::uint32_t ModelDef::NumUnits() const {
 std::size_t ModelDef::NumLstmWeights() const {
   std::size_t total{0};
   for (std::size_t i = 0; i < NumLayers(); ++i) {
-    total += LstmW().at(i).Data().size() +
-        LstmR().at(i).Data().size() +
-        LstmB().at(i).Data().size();
+    total += LstmW().at(i).Data().size() + LstmR().at(i).Data().size() + LstmB().at(i).Data().size();
   }
   return total;
 }
 
-std::size_t ModelDef::GateIndex(char gate)  {
+std::size_t ModelDef::GateIndex(char gate) {
   switch (gate) {
     case 'i':
       return 0;
@@ -148,19 +147,23 @@ void ModelDef::Check() {
   }
 
   auto const num_units = NumUnits();
-  auto expected_input_size = NumFeatures();
+  auto const num_gates = static_cast<std::size_t>(num_units) * 4;
+  auto const num_biases = static_cast<std::size_t>(num_units) * 8;
+  auto layer_input_size = NumFeatures();
 
   for (std::uint32_t i = 0; i < num_layers; ++i) {
     auto &shape_W = lstm_W_.at(i).Shape();
-    StateCheck(shape_W.at(1) == num_units * 4);
-    StateCheck(shape_W.at(2) == expected_input_size);
+    StateCheck(shape_W.at(1) == num_gates);
+    StateCheck(shape_W.at(2) == layer_input_size);
     auto &shape_R = lstm_R_.at(i).Shape();
-    StateCheck(shape_R.at(1) == num_units * 4);
+    StateCheck(shape_R.at(1) == num_gates);
     StateCheck(shape_R.at(2) == num_units);
     auto &shape_B = lstm_B_.at(i).Shape();
     StateCheck(shape_B.at(0) == 1);
-    StateCheck(shape_B.at(1) == num_units * 8);
-    expected_input_size = num_units;
+    StateCheck(shape_B.at(1) == num_biases);
+
+    // The input size for the next layer is the number of units in the current layer.
+    layer_input_size = num_units;
   }
 
   StateCheck(mat_mul_.Shape().at(0) == (num_layers > 0 ? num_units : NumSteps() * NumFeatures()));
@@ -207,17 +210,18 @@ std::size_t ModelDef::Flops(std::uint32_t cost_sigmoid, std::uint32_t cost_tanh)
   return result;
 }
 
-double ModelDef::SerialSolNanos(double const flops_per_nano_gemm,
-                                double const flops_per_nano_other,
-                                std::uint32_t cost_sigmoid,
-                                std::uint32_t cost_tanh) const {
+double ModelDef::SerialSolNanos(
+    double const flops_per_nano_gemm,
+    double const flops_per_nano_other,
+    std::uint32_t cost_sigmoid,
+    std::uint32_t cost_tanh) const {
   double result{0};
 
   for (std::uint32_t l = 0; l < NumLayers(); ++l) {
     // vector - vector addition for bias
     auto &shape_B = LstmB().at(l).Shape();
     assert(shape_B.at(0) == 1);
-    auto const num_bias =  shape_B.at(1) / 2;
+    auto const num_bias = shape_B.at(1) / 2;
 
     // matrix - vector multiplications
     auto &shape_W = LstmW().at(l).Shape();

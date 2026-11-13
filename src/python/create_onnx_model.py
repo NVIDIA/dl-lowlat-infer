@@ -3,38 +3,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import argparse
+
 import torch
 import torch.nn as nn
 import torch.onnx
-import argparse
-import numpy as np
 
-lstm_s = {
-    "input_size": 128,
-    "hidden_size": 96,
-    "num_layers": 2,
-    "num_steps": 64
-}
+lstm_s = {"input_size": 128, "hidden_size": 96, "num_layers": 2, "num_steps": 64}
 
-lstm_m = {
-    "input_size": 192,
-    "hidden_size": 160,
-    "num_layers": 3,
-    "num_steps": 96
-}
+lstm_m = {"input_size": 192, "hidden_size": 160, "num_layers": 3, "num_steps": 96}
 
-lstm_l = {
-    "input_size": 512,
-    "hidden_size": 736,
-    "num_layers": 4,
-    "num_steps": 128
-}
+lstm_l = {"input_size": 512, "hidden_size": 736, "num_layers": 4, "num_steps": 128}
 
-MODELS = {
-    "s": lstm_s,
-    "m": lstm_m,
-    "l": lstm_l
-}
+MODELS = {"s": lstm_s, "m": lstm_m, "l": lstm_l}
+
 
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers=1):
@@ -48,22 +30,25 @@ class LSTMModel(nn.Module):
         out = self.fc(out[-1, :, :])
         return out
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--model", type=str, required=True, choices=MODELS.keys())
+    parser.add_argument("--model", choices=MODELS.keys())
     parser.add_argument("--output-dir", type=str, required=True)
     args = parser.parse_args()
 
-
     output_dir = args.output_dir
 
-    model_configs = MODELS
+    model_configs = {args.model: MODELS[args.model]} if args.model else MODELS
 
     torch.manual_seed(2132435)
 
     for name, model_config in model_configs.items():
-        lstm_model = LSTMModel(input_size=model_config["input_size"], hidden_size=model_config["hidden_size"], num_layers=model_config["num_layers"])
+        lstm_model = LSTMModel(
+            input_size=model_config["input_size"],
+            hidden_size=model_config["hidden_size"],
+            num_layers=model_config["num_layers"],
+        )
         lstm_model.eval()
 
         x = torch.randn(1, model_config["num_steps"], model_config["input_size"])
@@ -76,5 +61,5 @@ if __name__ == "__main__":
             input_names=["input"],
             output_names=["output"],
             # No dynamic_shapes needed since batch is fixed
-            #dynamo=True    # Use torch.export-based exporter if PyTorch is recent enough
+            # dynamo=True    # Use torch.export-based exporter if PyTorch is recent enough
         )

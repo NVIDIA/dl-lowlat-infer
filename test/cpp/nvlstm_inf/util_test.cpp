@@ -5,10 +5,9 @@
  */
 /* clang-format on */
 
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <nvlstm_inf/util.h>
-
-#include <filesystem>
 #include <vector>
 
 #ifndef TEST_RESOURCES_DIR
@@ -135,8 +134,9 @@ TEST(UtilTest, ClockResolution) {
 TEST(UtilTest, Affinity) {
   auto constexpr thread_current = 0;
   auto cpu_set_orig = GetAffinity(thread_current);
-  EXPECT_GE(cpu_set_orig.size(), 1);
-  CpuSet cpu_set_temp{0u};
+  ASSERT_GE(cpu_set_orig.size(), 1);
+  // a CPU the thread may run on: CPU 0 can be outside the allowed set (e.g. a Slurm job's cpuset)
+  CpuSet cpu_set_temp{cpu_set_orig.front()};
   SetAffinity(thread_current, cpu_set_temp);
   auto cpu_set_test = GetAffinity(thread_current);
   EXPECT_EQ(cpu_set_test, cpu_set_temp);

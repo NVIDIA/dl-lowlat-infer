@@ -21,13 +21,14 @@ class ModelDef {
 
   explicit ModelDef(char const *model_dir, bool skip_weights = false);
 
-  ModelDef(std::uint32_t num_steps,
-           std::uint32_t num_features,
-           LstmTensors &&lstm_W,
-           LstmTensors &&lstm_R,
-           LstmTensors &&lstm_B,
-           util::Tensor32 &&mat_mul,
-           float bias);
+  ModelDef(
+      std::uint32_t num_steps,
+      std::uint32_t num_features,
+      LstmTensors &&lstm_W,
+      LstmTensors &&lstm_R,
+      LstmTensors &&lstm_B,
+      util::Tensor32 &&mat_mul,
+      float bias);
 
   [[nodiscard]] auto NumSteps() const { return num_steps_; }
   void NumSteps(std::uint32_t num_steps) { num_steps_ = num_steps; }
@@ -61,18 +62,20 @@ class ModelDef {
 
   static auto constexpr kCostActivation = 2;
 
-  [[nodiscard]] std::size_t Flops(std::uint32_t cost_sigmoid = kCostActivation,
-                                  std::uint32_t cost_tanh = kCostActivation) const;
+  [[nodiscard]] std::size_t Flops(
+      std::uint32_t cost_sigmoid = kCostActivation, std::uint32_t cost_tanh = kCostActivation) const;
 
-  [[nodiscard]] double SerialSolNanos(double flops_per_nano_gemm,
-                                      double flops_per_nano_other,
-                                      std::uint32_t cost_sigmoid = 2,
-                                      std::uint32_t cost_tanh = 2) const;
+  [[nodiscard]] double SerialSolNanos(
+      double flops_per_nano_gemm,
+      double flops_per_nano_other,
+      std::uint32_t cost_sigmoid = 2,
+      std::uint32_t cost_tanh = 2) const;
 
-  [[nodiscard]] double FlopsPerNanoSol(double flops_per_nano_gemm,
-                                       double flops_per_nano_other,
-                                       std::uint32_t cost_sigmoid = kCostActivation,
-                                       std::uint32_t cost_tanh = kCostActivation) const {
+  [[nodiscard]] double FlopsPerNanoSol(
+      double flops_per_nano_gemm,
+      double flops_per_nano_other,
+      std::uint32_t cost_sigmoid = kCostActivation,
+      std::uint32_t cost_tanh = kCostActivation) const {
     return static_cast<double>(Flops(cost_sigmoid, cost_sigmoid)) /
            SerialSolNanos(flops_per_nano_gemm, flops_per_nano_other, cost_sigmoid, cost_tanh);
   }

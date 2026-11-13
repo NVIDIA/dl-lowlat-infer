@@ -5,11 +5,9 @@
  */
 /* clang-format on */
 
-#include <gtest/gtest.h>
-
 #include <cutlass/gemm/device/gemm.h>
 #include <cutlass/numeric_types.h>
-
+#include <gtest/gtest.h>
 #include <nvlstm_inf/CudaEnv.cuh>
 #include <nvlstm_inf/cuda_helpers.cuh>
 
@@ -48,16 +46,17 @@ TEST_F(CutlassTest, Gemm) {
   using layout = cutlass::layout::ColumnMajor;
 
   // Define the GEMM operation
-  using Gemm = cutlass::gemm::device::Gemm<data_type,                   // ElementA
-                                           layout,                      // LayoutA
-                                           data_type,                   // ElementB
-                                           layout,                      // LayoutB
-                                           data_type,                   // ElementOutput
-                                           layout,                      // LayoutOutput
-                                           float,                       // ElementAccumulator
-                                           cutlass::arch::OpClassSimt,  // tag indicating Tensor Cores
-                                           cutlass::arch::Sm80  // tag indicating target GPU compute architecture
-                                           >;
+  using Gemm = cutlass::gemm::device::Gemm<
+      data_type,                   // ElementA
+      layout,                      // LayoutA
+      data_type,                   // ElementB
+      layout,                      // LayoutB
+      data_type,                   // ElementOutput
+      layout,                      // LayoutOutput
+      float,                       // ElementAccumulator
+      cutlass::arch::OpClassSimt,  // tag indicating Tensor Cores
+      cutlass::arch::Sm80          // tag indicating target GPU compute architecture
+      >;
 
   Gemm gemm_op;
 
@@ -82,15 +81,16 @@ TEST_F(CutlassTest, Gemm) {
   // Launch GEMM on the device
   //
 
-  EXPECT_EQ(gemm_op.initialize({
-                {M, N, K},
-                {A.Get(), A.LeadingDim()},  // TensorRef to A device tensor
-                {B.Get(), B.LeadingDim()},  // TensorRef to B device tensor
-                {C.Get(), C.LeadingDim()},  // TensorRef to C device tensor
-                {C.Get(), C.LeadingDim()},  // TensorRef to C device tensor
-                {alpha, beta}               // epilogue operation arguments
-            }),
-            cutlass::Status::kSuccess);
+  EXPECT_EQ(
+      gemm_op.initialize({
+          {M, N, K},
+          {A.Get(), A.LeadingDim()},  // TensorRef to A device tensor
+          {B.Get(), B.LeadingDim()},  // TensorRef to B device tensor
+          {C.Get(), C.LeadingDim()},  // TensorRef to C device tensor
+          {C.Get(), C.LeadingDim()},  // TensorRef to C device tensor
+          {alpha, beta}               // epilogue operation arguments
+      }),
+      cutlass::Status::kSuccess);
 
   EXPECT_EQ(gemm_op(cuda_env_->Stream()), cutlass::Status::kSuccess);
 }

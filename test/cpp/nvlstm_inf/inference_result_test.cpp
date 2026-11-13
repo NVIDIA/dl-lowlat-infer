@@ -5,11 +5,11 @@
  */
 /* clang-format on */
 
-#include <gtest/gtest.h>
-
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <gtest/gtest.h>
+#include <stdexcept>
 
 #include "nvlstm_inf/InferenceResult.h"
 #include "nvlstm_inf/util.h"
@@ -56,6 +56,27 @@ TEST(InferenceResult, Add) {
     EXPECT_EQ(result.TsStart().at(i), start);
     EXPECT_EQ(result.TsStop().at(i), stop);
   }
+}
+
+TEST(InferenceResult, P99RejectsEmptyResult) {
+  InferenceResult result{0};
+  EXPECT_THROW(static_cast<void>(result.P99()), std::runtime_error);
+}
+
+TEST(InferenceResult, P99UsesNearestRank) {
+  auto check_p99 = [](int sample_count, int expected_nanos) {
+    using Clock = InferenceResult::Clock;
+    auto const base = Clock::time_point{};
+    InferenceResult result{static_cast<std::size_t>(sample_count)};
+    for (int nanos = sample_count - 1; nanos >= 0; --nanos) {
+      result.Add(0.0F, base, base + std::chrono::nanoseconds{nanos});
+    }
+    EXPECT_EQ(result.P99(), std::chrono::nanoseconds{expected_nanos});
+  };
+
+  check_p99(1, 0);
+  check_p99(100, 98);
+  check_p99(101, 99);
 }
 
 TEST(InferenceResult, ToFracSeconds) {

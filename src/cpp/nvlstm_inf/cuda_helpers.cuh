@@ -9,19 +9,18 @@
 #define NLSTMINF_SRC_CPP_NVLSTMINF_CUDA_HELPERS_CUH_
 
 #include <cublas_v2.h>
-#include <cuda_fp16.h>
-#include <cuda_runtime_api.h>
-#include <cudnn.h>
-
 #include <cuda.h>
 #include <cuda/atomic>
+#include <cuda/cmath>
+#include <cuda_fp16.h>
+#include <cuda_runtime_api.h>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-#include "util.h"
 #include "cuda_error_util.h"
+#include "util.h"
 namespace nvidia::quant::lowlat_infer::cex {
 
 int DeviceCount();
@@ -60,7 +59,7 @@ PinnedPtr<T> MallocHost(std::size_t size, unsigned int flags = cudaHostAllocMapp
 template <typename T>
 PagedPtr<T> MallocPaged(std::size_t size, unsigned int flags = 0) {
   T *ptr;
-  ptr = (T *) std::malloc(size * sizeof(T));
+  ptr = (T *)std::malloc(size * sizeof(T));
   return PagedPtr<T>{ptr};
 }
 
@@ -174,8 +173,8 @@ template <typename T>
 DeviceArray2D<T> Malloc2D(std::size_t num_rows, std::size_t num_cols) {
   T *ptr;
   std::size_t pitch;
-  //CudaCheck(cudaMallocPitch(&ptr, &pitch, num_cols * sizeof(T), num_rows));
-  pitch = (num_cols * sizeof(T) + 128 - 1) / 128 * 128;
+  // CudaCheck(cudaMallocPitch(&ptr, &pitch, num_cols * sizeof(T), num_rows));
+  pitch = cuda::round_up(num_cols * sizeof(T), 128);
   CudaCheck(cudaMalloc(&ptr, pitch * num_rows));
   return Array2D{DevicePtr<T>{ptr}, pitch};
 }
@@ -222,52 +221,57 @@ void Copy(T *tgt, std::unique_ptr<T[], D> const &src, std::size_t size, cudaStre
 }
 
 template <typename T, typename S, std::enable_if_t<std::is_same_v<T, std::remove_cv_t<S>>, bool> = false>
-void Copy2D(T *tgt,
-            std::size_t tgt_pitch,
-            S *src,
-            std::size_t src_pitch,
-            std::size_t num_rows,
-            std::size_t num_cols,
-            cudaStream_t stream) {
+void Copy2D(
+    T *tgt,
+    std::size_t tgt_pitch,
+    S *src,
+    std::size_t src_pitch,
+    std::size_t num_rows,
+    std::size_t num_cols,
+    cudaStream_t stream) {
   CudaCheck(
       cudaMemcpy2DAsync(tgt, tgt_pitch, src, src_pitch, num_cols * sizeof(T), num_rows, cudaMemcpyDefault, stream));
 }
 
 template <typename T>
-void Copy2D(Array2D<T> &tgt,
-            typename Array2D<T>::ValueType const *src,
-            std::size_t src_pitch,
-            std::size_t num_rows,
-            std::size_t num_cols,
-            cudaStream_t stream) {
+void Copy2D(
+    Array2D<T> &tgt,
+    typename Array2D<T>::ValueType const *src,
+    std::size_t src_pitch,
+    std::size_t num_rows,
+    std::size_t num_cols,
+    cudaStream_t stream) {
   Copy2D(tgt.Get(), tgt.Pitch(), src, src_pitch, num_rows, num_cols, stream);
 }
 
 template <typename T>
-void Copy2D(Array2D<T> &tgt,
-            typename Array2D<T>::ValueType const *src,
-            std::size_t num_rows,
-            std::size_t num_cols,
-            cudaStream_t stream) {
+void Copy2D(
+    Array2D<T> &tgt,
+    typename Array2D<T>::ValueType const *src,
+    std::size_t num_rows,
+    std::size_t num_cols,
+    cudaStream_t stream) {
   Copy2D(tgt, src, num_cols * Array2D<T>::kValueSize, num_rows, num_cols, stream);
 }
 
 template <typename T>
-void Copy2D(typename Array2D<T>::ValueType *tgt,
-            std::size_t tgt_pitch,
-            Array2D<T> const &src,
-            std::size_t num_rows,
-            std::size_t num_cols,
-            cudaStream_t stream) {
+void Copy2D(
+    typename Array2D<T>::ValueType *tgt,
+    std::size_t tgt_pitch,
+    Array2D<T> const &src,
+    std::size_t num_rows,
+    std::size_t num_cols,
+    cudaStream_t stream) {
   Copy2D(tgt, tgt_pitch, src.Get(), src.Pitch(), num_rows, num_cols, stream);
 }
 
 template <typename T>
-void Copy2D(typename Array2D<T>::ValueType *tgt,
-            Array2D<T> const &src,
-            std::size_t num_rows,
-            std::size_t num_cols,
-            cudaStream_t stream) {
+void Copy2D(
+    typename Array2D<T>::ValueType *tgt,
+    Array2D<T> const &src,
+    std::size_t num_rows,
+    std::size_t num_cols,
+    cudaStream_t stream) {
   Copy2D(tgt, num_cols * Array2D<T>::kValueSize, src, num_rows, num_cols, stream);
 }
 
@@ -318,7 +322,7 @@ class PinnedAllocator {
 
   T *allocate(size_type n) {
     T *tmp;
-#if 0 
+#if 0
 // AARCH64_GH == 1
     tmp = (T*) std::malloc(n * sizeof(T));
 #else
@@ -351,11 +355,6 @@ using PinnedVector16 = std::vector<half, PinnedAllocator<half>>;
 using PinnedTensor16 = util::Tensor<PinnedVector16>;
 using PinnedVector32 = std::vector<float, PinnedAllocator<float>>;
 using PinnedTensor32 = util::Tensor<PinnedVector32>;
-
-template <typename T, typename U>
-auto constexpr CeilDiv(T numerator, U denominator) {
-  return (numerator + denominator - 1) / denominator;
-}
 
 class CudaStreamDeleter {
  public:
@@ -499,13 +498,9 @@ class SingleProducerSingleConsumer {
     return empty_.IsReady(mo);
   }
 
-  __host__ bool TryProduce(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) {
-    return empty_.TryReset(mo);
-  }
+  __host__ bool TryProduce(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) { return empty_.TryReset(mo); }
 
-  __host__ void WaitToProduce(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) {
-    empty_.WaitReset(mo);
-  }
+  __host__ void WaitToProduce(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) { empty_.WaitReset(mo); }
 
   __host__ void WaitToProduce(cudaStream_t stream, cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) {
     empty_.WaitReset(stream, mo);
@@ -524,13 +519,9 @@ class SingleProducerSingleConsumer {
     return full_.IsReady(mo);
   }
 
-  __host__ bool TryConsume(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) {
-    return full_.TryReset(mo);
-  }
+  __host__ bool TryConsume(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) { return full_.TryReset(mo); }
 
-  __host__ void WaitToConsume(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) {
-    full_.WaitReset(mo);
-  }
+  __host__ void WaitToConsume(cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) { full_.WaitReset(mo); }
 
   __host__ void WaitToConsume(cudaStream_t stream, cuda::std::memory_order mo = cuda::std::memory_order_acq_rel) {
     full_.WaitReset(stream, mo);

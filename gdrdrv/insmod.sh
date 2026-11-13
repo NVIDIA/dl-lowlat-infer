@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
- 
+
 set -e
 
 THIS_DIR=$(dirname $0)
@@ -14,7 +14,7 @@ if grep gdrdrv /proc/devices >/dev/null; then
     RMMOD_OUTPUT=$(sudo /sbin/rmmod gdrdrv 2>&1)
     RMMOD_RESULT=$?
     set -e
-    
+
     if [ $RMMOD_RESULT -ne 0 ]; then
         echo "ERROR: Failed to remove existing gdrdrv kernel module"
         echo "Output: $RMMOD_OUTPUT"
@@ -26,7 +26,7 @@ if grep gdrdrv /proc/devices >/dev/null; then
     echo "Module removed successfully"
 fi
 
-# Insert driver  
+# Insert driver
 KERNEL_VERSION=`uname -r`
 DRV_DIR="mod-${KERNEL_VERSION}"
 if [[ ! -d ${THIS_DIR}/${DRV_DIR} ]]; then

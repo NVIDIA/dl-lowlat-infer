@@ -5,9 +5,12 @@
  */
 /* clang-format on */
 
+#include <algorithm>
+#include <cuda/cmath>
+
 #include "CudaEnv.cuh"
 #include "ModelDef.h"
-
+#include "ss_gemv_impl/fp16_reg/gemv_lstm_fp16_reg.h"
 #include "ss_gemv_impl/kernel_params.h"
 
 namespace nvidia::quant::lowlat_infer {
@@ -18,16 +21,22 @@ CUdevResource g_gctx_remaining_partition;
 
 GreenContextsVector g_contexts;
 
-//static GreenContextsVector g_green_contexts;
+// static GreenContextsVector g_green_contexts;
 
-// We manage the contexts outside of the benchmark class, 
+// We manage the contexts outside of the benchmark class,
 // so there is more flexibility in when we delete the contexts.
 // e.g. before calling DeviceReset but after the Benchmark class
 // is out of scope
-GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
-                         std::uint32_t num_instances, int sm_arch, int device_id,
-                         CUcontext* primary_ctx_ptr, bool use_precompute_green_context, bool is_ping_pong_model) {
-
+/// One green context per instance and one for the rest of the device (CudaEnv.cuh).
+GreenContextsVector CreateGreenContexts(
+    std::uint32_t num_units,
+    std::uint32_t num_instances,
+    int sm_arch,
+    int device_id,
+    CUcontext* primary_ctx_ptr,
+    bool use_precompute_green_context,
+    bool is_ping_pong_model,
+    bool fp16_reg_m) {
   GreenContextsVector green_contexts;
 
   CudaCheck(cudaGetDevice(&device_id));
@@ -38,7 +47,7 @@ GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
   CudaCheck(cudaGetDeviceProperties(&prop, device_id));
   std::uint32_t sm_count = prop.multiProcessorCount;
 
-  std::uint32_t min_sm_count_per_instance = (num_units <= LSTM_S_NUM_UNITS)? 8:16;
+  std::uint32_t min_sm_count_per_instance = (num_units <= LSTM_S_NUM_UNITS) ? 8 : 16;
   std::uint32_t part_size = min_sm_count_per_instance;
   unsigned int use_flags = 0;
 
@@ -50,8 +59,9 @@ GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
     if (is_ping_pong_model) {
       use_flags = CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING;
     } else {
-      use_flags = (num_units <= LSTM_S_NUM_UNITS)? 0: CU_DEV_SM_RESOURCE_SPLIT_MAX_POTENTIAL_CLUSTER_SIZE;
-      use_flags = (num_units <= LSTM_S_NUM_UNITS && num_instances > 8)? CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING : use_flags;
+      use_flags = (num_units <= LSTM_S_NUM_UNITS) ? 0 : CU_DEV_SM_RESOURCE_SPLIT_MAX_POTENTIAL_CLUSTER_SIZE;
+      use_flags = (num_units <= LSTM_S_NUM_UNITS && num_instances > 8) ? CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING
+                                                                       : use_flags;
     }
   } else {
     if (num_units <= LSTM_S_NUM_UNITS || is_ping_pong_model) {
@@ -59,13 +69,22 @@ GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
       use_flags = CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING;
     } else {
       // add logic of choosing the cluster size
-      part_size = 8; use_flags = 0;
+      part_size = 8;
+      use_flags = 0;
       if (ssgemv::is_sm_heavy_arch(sm_arch)) {
-          part_size = 16;
-          use_flags = CU_DEV_SM_RESOURCE_SPLIT_MAX_POTENTIAL_CLUSTER_SIZE;
+        part_size = 16;
+        use_flags = CU_DEV_SM_RESOURCE_SPLIT_MAX_POTENTIAL_CLUSTER_SIZE;
       }
     }
-  } 
+  }
+
+  // lstm_m with the FP16 register-resident kernel (ModelConfig::fp16_reg_m): partitions of at least its CTAs, all
+  // resident at once, which can hold them as one hardware cluster with dsmem_exchange
+  if (fp16_reg_m) {
+    const auto ctas = static_cast<std::uint32_t>(ssgemv::fp16_reg_ctas(ssgemv::FP16_REG_LSTM_M_DIMS));
+    part_size = std::max(part_size, cuda::round_up(ctas, 8u));
+    if (ssgemv::FP16_REG_KERNEL_LSTM_M.dsmem_exchange) use_flags = CU_DEV_SM_RESOURCE_SPLIT_MAX_POTENTIAL_CLUSTER_SIZE;
+  }
 
   CUdevResource avail_resources;
   CUdevResourceType default_resource_type = CU_DEV_RESOURCE_TYPE_SM;
@@ -75,17 +94,21 @@ GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
     CuCheck(cuCtxGetDevResource(*primary_ctx_ptr, &avail_resources, default_resource_type));
   }
 
-  printf("Initial resources have %d SMs. Splitting into %d partitions of size %d\n", avail_resources.sm.smCount, num_instances, part_size);
+  printf(
+      "Initial resources have %d SMs. Splitting into %d partitions of size %d\n",
+      avail_resources.sm.smCount,
+      num_instances,
+      part_size);
 
   unsigned int min_SM_count = part_size;
 
   // only this is supported for now
-  if (num_units <= LSTM_S_NUM_UNITS) StateCheck(num_instances <= 32);
+  if (num_units <= LSTM_S_NUM_UNITS)
+    StateCheck(num_instances <= 32);
   else {
     if (ssgemv::is_sm_heavy_arch(sm_arch)) {
       StateCheck(num_instances <= 8);
-    }
-    else {
+    } else {
       StateCheck(num_instances <= 16);
     }
   }
@@ -93,18 +116,27 @@ GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
   g_gctx_partitions.resize(num_instances);
   unsigned int actual_split_groups = num_instances;
 
-  CuCheck(cuDevSmResourceSplitByCount(&g_gctx_partitions[0],
-                                      &actual_split_groups,
-                                      &avail_resources,
-                                      &g_gctx_remaining_partition,
-                                      use_flags,
-                                      min_SM_count));
+  CuCheck(cuDevSmResourceSplitByCount(
+      &g_gctx_partitions[0],
+      &actual_split_groups,
+      &avail_resources,
+      &g_gctx_remaining_partition,
+      use_flags,
+      min_SM_count));
 
-  printf("Split %d SMs into %d groups with %d SMs each and a remaining group with %d SMs\n",
-          avail_resources.sm.smCount, actual_split_groups, g_gctx_partitions[0].sm.smCount,
-          g_gctx_remaining_partition.sm.smCount);
+  printf(
+      "Split %d SMs into %d groups with %d SMs each and a remaining group with %d SMs\n",
+      avail_resources.sm.smCount,
+      actual_split_groups,
+      g_gctx_partitions[0].sm.smCount,
+      g_gctx_remaining_partition.sm.smCount);
 
   StateCheck(num_instances == actual_split_groups);
+  // The rest of the device (the precompute's context) must keep SMs: the partitions may not take all of them.
+  if (g_gctx_remaining_partition.sm.smCount == 0)
+    throw std::runtime_error(
+        std::to_string(num_instances) + " partition(s) of " + std::to_string(g_gctx_partitions[0].sm.smCount) +
+        " SMs leave no SMs for the rest of the device (fewer instances)");
 
   for (uint ii = 0; ii < actual_split_groups; ii++) {
     green_contexts.push_back(std::make_shared<GreenContext>(g_gctx_partitions[ii], device_id));
@@ -115,33 +147,48 @@ GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
   return green_contexts;
 }
 
-GreenContextsVector CreateGreenContexts(std::filesystem::path const &path_model,
-                         std::uint32_t num_instances, int sm_arch, int device_id, bool use_precompute_green_context, bool is_ping_pong_model) {
-
+/// As above, for the model at path_model.
+GreenContextsVector CreateGreenContexts(
+    std::filesystem::path const& path_model,
+    std::uint32_t num_instances,
+    int sm_arch,
+    int device_id,
+    bool use_precompute_green_context,
+    bool is_ping_pong_model,
+    bool fp16_reg_m) {
   ModelDef model_def{path_model.c_str()};
 
-  return CreateGreenContexts(model_def.NumUnits(), num_instances, sm_arch, device_id, nullptr, use_precompute_green_context, is_ping_pong_model);
+  return CreateGreenContexts(
+      model_def.NumUnits(),
+      num_instances,
+      sm_arch,
+      device_id,
+      nullptr,
+      use_precompute_green_context,
+      is_ping_pong_model,
+      fp16_reg_m);
 }
 
 int GetSmCountFromGreenStream(cudaStream_t stream) {
-  CUgreenCtx hCtx;
-  cuStreamGetGreenCtx ( stream, &hCtx );
+  CUgreenCtx hCtx = nullptr;
+  CuCheck(cuStreamGetGreenCtx(stream, &hCtx));
+  if (hCtx == nullptr) return 0;  // not a green context's stream
   CUcontext context;
-  cuCtxFromGreenCtx ( &context, hCtx );
+  CuCheck(cuCtxFromGreenCtx(&context, hCtx));
   CUdevResource resource;
-  cuCtxGetDevResource ( context, &resource,CU_DEV_RESOURCE_TYPE_SM );
+  CuCheck(cuCtxGetDevResource(context, &resource, CU_DEV_RESOURCE_TYPE_SM));
 
   return resource.sm.smCount;
 }
 
 unsigned long long GetCtxIdFromGreenStream(cudaStream_t stream) {
   CUgreenCtx hCtx;
-  cuStreamGetGreenCtx ( stream, &hCtx );
+  cuStreamGetGreenCtx(stream, &hCtx);
   CUcontext context;
-  cuCtxFromGreenCtx ( &context, hCtx );
+  cuCtxFromGreenCtx(&context, hCtx);
 
   unsigned long long ctxId;
-  cuCtxGetId( context, &ctxId );
+  cuCtxGetId(context, &ctxId);
 
   return ctxId;
 }
@@ -184,7 +231,6 @@ std::size_t CudaEnv::MaxDynamicSharedMemory() {
   CudaCheck(cudaGetDeviceProperties(&props, device));
   return props.sharedMemPerBlockOptin;
 }
-
 
 void CudaEnv::CreateStreams(unsigned int num_streams, int priority) {
   while (streams_.size() < num_streams) {

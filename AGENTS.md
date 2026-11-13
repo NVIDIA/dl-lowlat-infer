@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Canonical agent instructions for this repository (Cursor, Codex, Claude Code via `CLAUDE.md` import, and other coding agents).
+Canonical agent instructions for this repository.
 
 ## Project
 
@@ -11,28 +11,42 @@ Model sizes (features / steps / layers / units): `lstm_s` 128/64/2/96, `lstm_m` 
 ## Build, test, Docker
 
 ```bash
-cmake -DCMAKE_BUILD_TYPE=Release -DCPU_ARCH=native -DCMAKE_CUDA_ARCHITECTURES="90a-real" -B build
+cmake -DCMAKE_BUILD_TYPE=Release -DCPU_ARCH=native -DCMAKE_CUDA_ARCHITECTURES="120a-real" -B build
 cmake --build build --parallel
 cd build/ && ctest
 ```
 
-Key CMake options: `CMAKE_BUILD_TYPE`, `CPU_ARCH` (default `icelake-server`; use `native` locally), `CMAKE_CUDA_ARCHITECTURES` (e.g. `90a-real`, `100a-real`, `120a-real`), `CMAKE_INSTALL_PREFIX`, `BUILD_TESTS`, `USE_NVTX`, `USE_PCIE_OUTBOUND_ATOMICS`. Some timing tests fail in Debug.
+Key CMake options: `CMAKE_BUILD_TYPE`, `CPU_ARCH` (default `icelake-server`; use `native` locally), `CMAKE_CUDA_ARCHITECTURES` (e.g. `90a-real`, `100a-real`, `120a-real`), `CMAKE_INSTALL_PREFIX`, `BUILD_TESTS`, `USE_NVTX`, `USE_GDRCOPY`, `USE_PCIE_OUTBOUND_ATOMICS`. Some timing tests fail in Debug.
 
 Docker (needs NVIDIA Container Toolkit; `LOCAL_USER=1` for mounted-volume permissions):
 
 ```bash
-make -C docker CUDA_ARCHS=90a-real LOCAL_USER=1 develop_run
-make -C docker CUDA_ARCHS=90a-real release_run
-make -C docker CUDA_ARCHS=90a-real LOCAL_USER=1 models_run
-make -C docker CUDA_ARCHS=90a-real test_run
+make -C docker CUDA_ARCHS=120a-real LOCAL_USER=1 develop_run
+make -C docker CUDA_ARCHS=120a-real release_run
+make -C docker CUDA_ARCHS=120a-real LOCAL_USER=1 models_run
+make -C docker CUDA_ARCHS=120a-real test_run
 ```
 
 Requires Git LFS to clone (`sudo apt-get install git-lfs` on Ubuntu). Runtime stack: CUDA 13.0+, cuBLAS, OpenMP 4.5+; optional cuBLASLt and GDRCopy. Tests use Google Test (CUTLASS only in `cutlass_test.cu`). No cuDNN.
 
 ## Formatting
 
-- C++: `clang-format -i <files>` with the repo `.clang-format`
-- Python: `black src/python/*.py`
+- Install hooks once per clone: `pip install pre-commit && pre-commit install`
+- Run all checks manually: `pre-commit run --all-files`
+- C/C++/CUDA: `clang-format -i <files>` with the repo `.clang-format`
+- CMake: `cmake-format -i <files>`
+- Python: `ruff check --fix src/python test/python scripts && ruff format src/python test/python scripts`
+- Host C++ static analysis: configure `build/`, then run `python3 scripts/run_clang_tidy.py --build-dir build`
+
+See [CODING_GUIDELINES.md](CODING_GUIDELINES.md) for the complete tooling and
+changed-line clang-tidy workflow.
+
+## Commit messages
+
+Use Conventional Commits in the form
+`<type>(optional-scope): <imperative summary>`. Allowed types are `feat`, `fix`,
+`perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, and `revert`.
+Keep the summary lowercase and do not end it with a period.
 
 ## Hard constraints
 

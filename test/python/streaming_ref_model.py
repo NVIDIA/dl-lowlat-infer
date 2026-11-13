@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import numpy as np
-import torch
-import pathlib
 import argparse
 import logging
-import time
 import os
-import tqdm
-
+import pathlib
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
+
+import numpy as np
+import torch
+import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +41,8 @@ MAX_LAYERS = 20
 
 def num_layers_(path: pathlib.Path) -> Optional[int]:
     nl = None
-    for l in range(MAX_LAYERS):
-        if not (path / f"lstm_{l}_W.npy").is_file():
+    for layer in range(MAX_LAYERS):
+        if not (path / f"lstm_{layer}_W.npy").is_file():
             return nl
         nl = 1 if nl is None else nl + 1
     raise AssertionError("Exceeded max number of layers")
@@ -61,8 +61,7 @@ class LSTMStreaming(torch.nn.Module):
 
 
 def onnx_to_torch(w: torch.Tensor) -> torch.Tensor:
-    """
-    Convert tensor from ONNX order to torch order
+    """Convert tensor from ONNX order to torch order.
 
     Converts the tensor from iofc gate order (ONNX) to ifco gates order
     (torch).
@@ -72,7 +71,7 @@ def onnx_to_torch(w: torch.Tensor) -> torch.Tensor:
 
 
 def onnx_to_torch_bias(b: torch.Tensor) -> torch.Tensor:
-    """Change gate order for bias"""
+    """Change gate order for bias."""
     return torch.concat(tuple(map(onnx_to_torch, torch.chunk(b, 2))))
 
 
@@ -89,8 +88,7 @@ class LSTMRun:
 
 
 def createLSTMRun(lstm_dir: pathlib.Path) -> LSTMRun:
-    """
-    Generate LSTMRun from files in data directory
+    """Generate LSTMRun from files in data directory.
 
     Layout of data in the files is described in
     https://onnx.ai/onnx/operators/onnx__LSTM.html#lstm-7
@@ -99,9 +97,9 @@ def createLSTMRun(lstm_dir: pathlib.Path) -> LSTMRun:
     """
     num_layers = num_layers_(lstm_dir)
     logger.debug(f"LSTM with {num_layers} layers")
-    ws = [torch.tensor(np.load(lstm_dir / f"lstm_{l}_W.npy")).squeeze() for l in range(num_layers)]
-    rs = [torch.tensor(np.load(lstm_dir / f"lstm_{l}_R.npy")).squeeze() for l in range(num_layers)]
-    bs = [torch.tensor(np.load(lstm_dir / f"lstm_{l}_B.npy")).squeeze() for l in range(num_layers)]
+    ws = [torch.tensor(np.load(lstm_dir / f"lstm_{layer}_W.npy")).squeeze() for layer in range(num_layers)]
+    rs = [torch.tensor(np.load(lstm_dir / f"lstm_{layer}_R.npy")).squeeze() for layer in range(num_layers)]
+    bs = [torch.tensor(np.load(lstm_dir / f"lstm_{layer}_B.npy")).squeeze() for layer in range(num_layers)]
     ws = list(map(onnx_to_torch, ws))
     rs = list(map(onnx_to_torch, rs))
     bs = list(map(onnx_to_torch_bias, bs))
@@ -109,12 +107,12 @@ def createLSTMRun(lstm_dir: pathlib.Path) -> LSTMRun:
     _, f_h = rs[0].shape
     logger.debug(f"Input dimension {f_i} and feature dimension {f_h}")
     model = LSTMStreaming(f_i, f_h, num_layers)
-    for l in range(num_layers):
-        getattr(model.lstm, f"weight_ih_l{l}").data = ws[l]
-        getattr(model.lstm, f"weight_hh_l{l}").data = rs[l]
-        b_ih, b_hh = torch.chunk(bs[l], 2)
-        getattr(model.lstm, f"bias_ih_l{l}").data = b_ih
-        getattr(model.lstm, f"bias_hh_l{l}").data = b_hh
+    for layer in range(num_layers):
+        getattr(model.lstm, f"weight_ih_l{layer}").data = ws[layer]
+        getattr(model.lstm, f"weight_hh_l{layer}").data = rs[layer]
+        b_ih, b_hh = torch.chunk(bs[layer], 2)
+        getattr(model.lstm, f"bias_ih_l{layer}").data = b_ih
+        getattr(model.lstm, f"bias_hh_l{layer}").data = b_hh
     model.fc.weight.data = torch.tensor(np.load(lstm_dir / "mul.npy")).squeeze()[torch.newaxis, :]
     model.fc.bias.data = torch.tensor(np.load(lstm_dir / "add.npy")).squeeze()
 
@@ -132,7 +130,7 @@ def main():
         r = model(x).item()
         end_ts = time.time_ns()
         if args.verbose:
-            logger.info(f"{i} => {r} in {(end_ts - start_ts)/1000}us")
+            logger.info(f"{i} => {r} in {(end_ts - start_ts) / 1000}us")
         res[i, :] = np.array([r, start_ts, end_ts])
     if args.output is not None:
         np.save(str(args.output), res, allow_pickle=False)

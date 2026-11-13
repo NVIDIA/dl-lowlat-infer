@@ -7,24 +7,27 @@ FROM ${NGC_IMAGE}:${NGC_TAG} as develop
 
 RUN apt-get update \
         && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --yes --quiet \
-        curl \
+        clang-tidy-20 \
+        clangd-20 \
+        cmake \
+        gdb \
+        gdbserver \
         git \
         git-lfs \
-        gdbserver \
         htop \
+        kmod \
+        libnuma-dev \
         numactl \
         openssh-client \
         python3-dev \
-        python3-venv \
         python3-pip \
+        python3-venv \
         rsync \
-        sudo \
-        cmake \
-        gdb \
-        libnuma-dev \
-        vim \
         software-properties-common \
-        kmod \
+        sudo \
+        vim \
+ && update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-20 100 \
+ && update-alternatives --install /usr/bin/clangd clangd /usr/bin/clangd-20 100 \
  && rm -rf /var/lib/apt/lists/*
 
 ARG APP_DIR
@@ -32,7 +35,7 @@ WORKDIR ${APP_DIR}
 
 ENV PATH="/app/python-venv/bin:${PATH}"
 
-RUN --mount=type=cache,target=/root/.cache/pip \ 
+RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv /app/python-venv \
  && pip3 install --no-cache-dir --upgrade pip setuptools \
  && pip3 install --no-cache-dir \
@@ -61,9 +64,10 @@ COPY test test
 ARG APP_DIR
 ARG CMAKE_BUILD_TYPE=RELEASE
 ARG CPU_ARCH=native
-ARG CUDA_ARCHS="90a-real;100-real"
+ARG CUDA_ARCHS="90a-real;100-real;120a-real"
 ARG BUILD_TESTS=OFF
-RUN mkdir build \
+ARG USE_GDRCOPY=ON
+RUN mkdir -p build ${APP_DIR}/../gdrcopy \
  && cd build \
  && cmake \
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
@@ -71,6 +75,7 @@ RUN mkdir build \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
         -DCMAKE_INSTALL_PREFIX=${APP_DIR} \
         -DBUILD_TESTS=${BUILD_TESTS} \
+        -DUSE_GDRCOPY=${USE_GDRCOPY} \
         .. \
  && make -j$(nproc) install \
  && chmod -R a+w .
@@ -107,7 +112,7 @@ FROM models as release
 
 ARG GDRCOPY_DIR=/app/gdrcopy
 COPY --from=cmake ${APP_DIR}/../gdrcopy ${GDRCOPY_DIR}/
-# Make GDRCOPY_DIR available at runtime (inherited by models and release stages)
+# Runtime search path for GDRCopy in this image only (not the models stage).
 ENV PATH="${GDRCOPY_DIR}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${GDRCOPY_DIR}/lib:${LD_LIBRARY_PATH}"
 

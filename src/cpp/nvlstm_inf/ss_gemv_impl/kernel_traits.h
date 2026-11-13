@@ -68,7 +68,7 @@ template <>
 struct Data_type<DATA_TYPE_FP16> {
   using Elem4_type = uint2;
   using Elem2_type = uint32_t;
-  using Elem_type  = uint16_t;
+  using Elem_type = uint16_t;
   static constexpr uint2 zero4{0, 0};
   static constexpr uint16_t zero{0};
 };
@@ -77,19 +77,18 @@ template <>
 struct Data_type<DATA_TYPE_BF16> {
   using Elem4_type = uint2;
   using Elem2_type = uint32_t;
-  using Elem_type  = uint16_t;
+  using Elem_type = uint16_t;
   static constexpr uint2 zero4{0, 0};
   static constexpr uint16_t zero{0};
 };
 
-
 template <Arch ARCH_, Data_kind DATA_KIND_, bool STAGE_, bool DEVICE_ALWAYS_SPIN_, bool GDRCOPY_ENABLED_>
 struct KernelDispatchTraits {
-    static constexpr Data_kind DATA_KIND = DATA_KIND_;
-    static constexpr bool STAGE = STAGE_;
-    static constexpr bool DEVICE_ALWAYS_SPIN = DEVICE_ALWAYS_SPIN_;
-    static constexpr bool GDRCOPY_ENABLED = GDRCOPY_ENABLED_;
-    static constexpr Arch ARCH = ARCH_;
+  static constexpr Data_kind DATA_KIND = DATA_KIND_;
+  static constexpr bool STAGE = STAGE_;
+  static constexpr bool DEVICE_ALWAYS_SPIN = DEVICE_ALWAYS_SPIN_;
+  static constexpr bool GDRCOPY_ENABLED = GDRCOPY_ENABLED_;
+  static constexpr Arch ARCH = ARCH_;
 };
 
 }  // namespace nvidia::quant::lowlat_infer::ssgemv

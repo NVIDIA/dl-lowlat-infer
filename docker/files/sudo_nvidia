@@ -1,4 +1,3 @@
 Defaults        always_set_home
 Defaults        editor="/usr/bin/vim:/usr/bin/vi:/usr/bin/nano"
 Defaults env_keep+=SSH_AUTH_SOCK
-
