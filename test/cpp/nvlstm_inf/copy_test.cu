@@ -5,14 +5,13 @@
  */
 /* clang-format on */
 
+#include <cstring>
+#include <cutlass/tfloat32.h>
 #include <gtest/gtest.h>
-#include <nvlstm_inf/util.h>
-
 #include <nvlstm_inf/CudaEnv.cuh>
 #include <nvlstm_inf/cuda_helpers.cuh>
+#include <nvlstm_inf/util.h>
 #include <random>
-
-#include <cutlass/tfloat32.h>
 
 #include "nvlstm_inf/cuda_copy.cuh"
 

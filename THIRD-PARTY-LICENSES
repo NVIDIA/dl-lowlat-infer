@@ -1,7 +1,7 @@
 This file contains the licenses for third-party code included in this repository.
 
 ================================================================================
-libnumpy 
+libnumpy
 
 Files: thirdparty/include
 ================================================================================
@@ -27,7 +27,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-GoogleTest 
+GoogleTest
 
 Files: build/_deps/googletest-src
 ================================================================================
@@ -272,7 +272,7 @@ limitations under the License.
 ================================================================================
 GDRCopy
 
-Files: build/_deps/gdrcopy-src, src/cpp/nvlstm_inf/gdrcopy_util.h, 
+Files: build/_deps/gdrcopy-src, src/cpp/nvlstm_inf/gdrcopy_util.h,
 src/cpp/nvlstm_inf/gdrcopy_util.cpp
 ================================================================================
 

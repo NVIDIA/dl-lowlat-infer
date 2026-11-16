@@ -215,7 +215,6 @@ unsigned int Log2(std::uint64_t n);
  */
 class DataSampler {
  public:
-
   virtual ~DataSampler() = default;
 
   /**
@@ -237,7 +236,6 @@ class DataSampler {
 
 class RingSampler : public DataSampler {
  public:
-
   RingSampler(std::uint64_t seed, std::uint64_t instance, std::size_t size);
 
   ~RingSampler() = default;
@@ -400,4 +398,3 @@ class SingleProducerSingleConsumer {
 };
 
 }  // namespace nvidia::quant::lowlat_infer::util
-

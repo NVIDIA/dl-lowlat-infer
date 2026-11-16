@@ -11,6 +11,7 @@
 #include <array>
 #include <functional>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "CudaEnv.cuh"
@@ -23,20 +24,18 @@ namespace nvidia::quant::lowlat_infer {
 
 // Supported data types are: float, half
 template <typename TData = float>
-class ModelSingleStepBase: public ModelInterface {
+class ModelSingleStepBase : public ModelInterface {
  public:
   using data_type = TData;
   using ModelInterface::Graph;
 
   struct Config final {
-    bool skip_scalar_product;
     bool streaming;
+    // everything on the main stream, so a captured graph has no fork/join nodes
+    bool single_stream = false;
   };
 
-  ModelSingleStepBase(CudaEnv &cuda_env,
-                ModelDef const &model_def,
-                std::uint32_t batch_size,
-                const Config& cfg);
+  ModelSingleStepBase(CudaEnv &cuda_env, ModelDef const &model_def, std::uint32_t batch_size, const Config &cfg);
 
   ~ModelSingleStepBase() override = default;
 
@@ -115,17 +114,45 @@ class ModelSingleStepBase: public ModelInterface {
     }
   }
 
-  void ResetPinnedOut() {
-    pinned_out_ = nullptr;
+  void ResetPinnedOut() { pinned_out_ = nullptr; }
+
+#if USE_FP16_REG_L_GRAPH
+  // For a kernel captured in front of each step (ModelSingleStepGemv's --lstm-l-in-graph), for the next Capture:
+  // Work captured at the start of each step (on the capture stream, given the step's parity), before its inference:
+  // the graph's single root. nullptr: none.
+  void SetCapturePrologue(std::function<void(cudaStream_t, bool)> prologue) { capture_prologue_ = std::move(prologue); }
+  // Capture n (1 or even) consecutive steps, each the prologue and the inference, in each graph (one per starting
+  // parity).
+  void SetStepsPerGraph(unsigned n) { steps_per_graph_ = n; }
+  // Layer 0's input product W_x * x of the step (per unit its 4 gates), written by the prologue's work: layer 0 reads
+  // it instead of computing it, and the step's input is not copied (layer 0 is its only reader). nullptr: computed.
+  void SetLayer0InputProduct(data_type const *dev) {
+    StateCheck(dev == nullptr || skip_replicate_);
+    layer0_x_dot_ = dev;
   }
+  // Launch graphs[parity] of a pair Capture returned with steps_per_graph steps each, as Launch.
+  void LaunchExec(cudaGraphExec_t const *graphs, unsigned steps_per_graph);
+#endif
 
  protected:
-  data_type* GetDevXLast() { return dev_x_last_; }
+  data_type *GetDevXLast() { return dev_x_last_; }
+  /// SetLayer0InputProduct (nullptr: computed).
+  data_type const *Layer0InputProduct() const {
+#if USE_FP16_REG_L_GRAPH
+    return layer0_x_dot_;
+#else
+    return nullptr;
+#endif
+  }
   bool SkipReplicate() { return skip_replicate_; }
+  bool SingleStream() const { return single_stream_; }
   CudaEnv &Env() { return cuda_env_; }
 
   cex::DevicePtr<data_type> &DevXExpanded() { return dev_x_expanded_; }
   cex::DevicePtr<data_type> &DevY() { return dev_y_; }
+  data_type const *DevMul() const { return dev_mul_.get(); }
+  float *OutputTarget() { return pinned_out_ ? pinned_out_ : dev_out_.get(); }
+  float Bias() const { return bias_; }
 
   // Indicates whether sliding window optimizations are enabled.
   [[nodiscard]] bool SingleStep() const { return true; }
@@ -149,6 +176,10 @@ class ModelSingleStepBase: public ModelInterface {
 
   template <typename TInput>
   void InputGeneric(TInput const **host_addr);
+
+  // The high-priority stream for input and output copies, or the main stream with single_stream
+  cudaStream_t ForkHighPriority(cudaEvent_t after);
+  void JoinHighPriority(cudaEvent_t after);
 
   // Capture the full inference CUDA graph with indirect copy.
   Graph Capture(std::function<void()> const &ops);
@@ -184,7 +215,14 @@ class ModelSingleStepBase: public ModelInterface {
   bool odd_step_{false};
 
   bool skip_replicate_{true};
-  bool skip_scalar_product_{false};
+
+  bool const single_stream_;
+
+#if USE_FP16_REG_L_GRAPH
+  std::function<void(cudaStream_t, bool)> capture_prologue_;
+  unsigned steps_per_graph_ = 1;
+  data_type const *layer0_x_dot_ = nullptr;
+#endif
 };
 
 }  // namespace nvidia::quant::lowlat_infer

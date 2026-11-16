@@ -34,7 +34,7 @@ bool const kConstantInit = []() {  // NOLINT(cert-err58-cpp)
   return false;
 }();
 
-}
+}  // namespace
 
 namespace nvidia::quant::lowlat_infer::cex {
 
@@ -59,25 +59,25 @@ void FloatToHalf(half *dst, float const *src, std::size_t size) {
   std::transform(src, src + size, dst, __float2half_rn);
 }
 
-template<>
+template <>
 half *ConstZero() {
   StateCheck(kConstantInit);
   return kZeroHalfAddr;
 }
 
-template<>
+template <>
 float *ConstZero() {
   StateCheck(kConstantInit);
   return kZeroFloatAddr;
 }
 
-template<>
+template <>
 half *ConstOne() {
   StateCheck(kConstantInit);
   return kOneHalfAddr;
 }
 
-template<>
+template <>
 float *ConstOne() {
   StateCheck(kConstantInit);
   return kOneFloatAddr;

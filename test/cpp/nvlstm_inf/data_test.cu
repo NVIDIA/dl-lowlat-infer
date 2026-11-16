@@ -5,15 +5,14 @@
  */
 /* clang-format on */
 
-#include <gtest/gtest.h>
-#include <nvlstm_inf/DataIterator.h>
-#include <nvlstm_inf/util.h>
-
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <gtest/gtest.h>
 #include <numeric>
+#include <nvlstm_inf/DataIterator.h>
 #include <nvlstm_inf/cuda_helpers.cuh>
+#include <nvlstm_inf/util.h>
 #include <vector>
 
 #ifndef TEST_RESOURCES_DIR
@@ -65,7 +64,7 @@ static constexpr size_t N_SAMPLES_USED = 65536;
 TEST_F(DataTest, Iterate) {
   DataIterator data_iterator{data_, std::make_unique<util::RandomSampler>(41, 1, N_SAMPLES_USED)};
   EXPECT_EQ(data_iterator.NumSamples(), 65536);
-  EXPECT_EQ(data_iterator.NumExcessSamples(),128);
+  EXPECT_EQ(data_iterator.NumExcessSamples(), 128);
   EXPECT_EQ(data_iterator.NumFeatures(), 128);
 
   std::vector<float> output(kNumFeatures * kNumInstances, 0.0f);
@@ -105,7 +104,8 @@ TEST_F(DataTest, IterateCuda) {
 TEST_F(DataTest, IteratePinned) {
   if (device_count_ == 0) GTEST_SKIP();
 
-  DataIterator data_iterator{data_.Reallocate<cex::PinnedAllocator<float>>(), std::make_unique<util::RandomSampler>(41, 1, N_SAMPLES_USED)};
+  DataIterator data_iterator{
+      data_.Reallocate<cex::PinnedAllocator<float>>(), std::make_unique<util::RandomSampler>(41, 1, N_SAMPLES_USED)};
 
   auto constexpr num_elems = kNumFeatures * kNumInstances;
   auto pinned = cex::MallocHost<float>(num_elems);
@@ -120,4 +120,3 @@ TEST_F(DataTest, IteratePinned) {
     EXPECT_NEAR(mean, expected_mean, 1e-6);
   }
 }
-

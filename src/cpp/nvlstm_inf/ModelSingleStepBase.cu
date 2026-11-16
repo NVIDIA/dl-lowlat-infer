@@ -15,7 +15,6 @@
 
 using namespace nvidia::quant::lowlat_infer;
 
-
 template <typename TData>
 ModelSingleStepBase<TData>::ModelSingleStepBase(
     CudaEnv &cuda_env,  // NOLINT(cppcoreguidelines-pro-type-member-init)
@@ -24,8 +23,8 @@ ModelSingleStepBase<TData>::ModelSingleStepBase(
     const Config &cfg)
     : ModelInterface{batch_size, cfg.streaming ? 1u : model_def.NumSteps(), model_def.NumFeatures(), model_def.NumUnits()},
       cuda_env_{cuda_env},
-      skip_scalar_product_{cfg.skip_scalar_product},
-      bias_{model_def.HasBias() ? model_def.Bias() : 0.0f} {
+      bias_{model_def.HasBias() ? model_def.Bias() : 0.0f},
+      single_stream_{cfg.single_stream} {
   static_assert(std::is_same_v<data_type, half> || std::is_same_v<data_type, float>);
 
   StateCheck(batch_size == 1);
@@ -34,7 +33,7 @@ ModelSingleStepBase<TData>::ModelSingleStepBase(
   auto const seq_length = NumSteps();
   auto const input_size = NumFeatures();
   dev_x_ = cex::Malloc<data_type>(input_size);
-        
+
   dev_x_expanded_ = cex::Malloc<data_type>(seq_length * batch_size * input_size);
 
   auto const num_units = NumUnits();
@@ -62,14 +61,11 @@ template <typename TData>
 void ModelSingleStepBase<TData>::Aggregate() {
   assert(dev_y_last_ != nullptr);
   auto const tgt = pinned_out_ ? pinned_out_ : dev_out_.get();
-  if (!skip_scalar_product_) {
-    copy::ScalarProduct(tgt, dev_y_last_, dev_mul_.get(), bias_, NumUnits(), Env().Stream());
-  }
+  copy::ScalarProduct(tgt, dev_y_last_, dev_mul_.get(), bias_, NumUnits(), Env().Stream());
 }
 
 template <typename TData>
 void ModelSingleStepBase<TData>::InitX(util::Tensor32 const &t) {
-
   auto const &data = t.Data();
   auto const data_size = data.size();
   auto const num_steps = NumSteps();
@@ -105,9 +101,29 @@ void ModelSingleStepBase<TData>::InitX(util::Tensor32 const &t) {
   assert(dev_x_last_ != nullptr);
 }
 
+// With single_stream the events are still recorded, on the main stream, so that direct calls are tracked as with the
+// fork (Launched(), InputWait(), OutputWait()); in a capture they add no node (Capture() adds the event nodes).
+template <typename TData>
+cudaStream_t ModelSingleStepBase<TData>::ForkHighPriority(cudaEvent_t after) {
+  if (single_stream_) {
+    CudaCheck(cudaEventRecord(after, Env().Stream()));
+    return Env().Stream();
+  }
+  return Env().ForkHighPriority(after);
+}
+
+template <typename TData>
+void ModelSingleStepBase<TData>::JoinHighPriority(cudaEvent_t after) {
+  if (single_stream_) {
+    CudaCheck(cudaEventRecord(after, Env().Stream()));
+  } else {
+    Env().JoinHighPriority(after);
+  }
+}
+
 template <typename TData>
 void ModelSingleStepBase<TData>::ShiftX() {
-    odd_step_ = !odd_step_;
+  odd_step_ = !odd_step_;
 }
 
 template <typename TData>
@@ -124,26 +140,32 @@ float const *ModelSingleStepBase<TData>::StageHostPointer(const float *host_in, 
 
 template <typename TData>
 void ModelSingleStepBase<TData>::Input(float const *host_in, bool sequence_major) {
-  auto stream_hp = Env().ForkHighPriority(event_in_start_.get());
+#if USE_FP16_REG_L_GRAPH
+  if (layer0_x_dot_ != nullptr) return;  // layer 0 does not read it
+#endif
+  auto stream_hp = ForkHighPriority(event_in_start_.get());
   assert(!sequence_major);
   StateCheck(dev_x_last_ != nullptr);
   auto const input_size = BatchSize() * NumFeatures();
   copy::Convert(dev_x_last_, host_in, input_size, stream_hp);
 
-  Env().JoinHighPriority(event_in_stop_.get());
-  
+  JoinHighPriority(event_in_stop_.get());
+
   ExpandInput();
 }
 
 template <typename TData>
 void ModelSingleStepBase<TData>::Input(half const *host_in, bool sequence_major) {
   if constexpr (std::is_same_v<data_type, half>) {
-    auto stream_hp = Env().ForkHighPriority(event_in_start_.get());
+#if USE_FP16_REG_L_GRAPH
+    if (layer0_x_dot_ != nullptr) return;  // layer 0 does not read it
+#endif
+    auto stream_hp = ForkHighPriority(event_in_start_.get());
     assert(!sequence_major);
     StateCheck(dev_x_last_ != nullptr);
     auto const input_size = BatchSize() * NumFeatures();
     cex::Copy(dev_x_last_, host_in, input_size, stream_hp);
-    Env().JoinHighPriority(event_in_stop_.get());
+    JoinHighPriority(event_in_stop_.get());
     ExpandInput();
   } else {
     throw std::runtime_error("Input of type half is only supported for FP16 models.");
@@ -167,22 +189,25 @@ void ModelSingleStepBase<TData>::Input(half const **host_addr) {
 template <typename TData>
 template <typename TInput>
 void ModelSingleStepBase<TData>::InputGeneric(TInput const **host_addr) {
-  auto stream_hp = Env().ForkHighPriority(event_in_start_.get());
+#if USE_FP16_REG_L_GRAPH
+  if (layer0_x_dot_ != nullptr) return;  // layer 0 does not read it
+#endif
+  auto stream_hp = ForkHighPriority(event_in_start_.get());
   StateCheck(dev_x_last_ != nullptr);
   copy::Convert(dev_x_last_, host_addr, BatchSize(), NumFeatures(), stream_hp);
 
-  Env().JoinHighPriority(event_in_stop_.get());
+  JoinHighPriority(event_in_stop_.get());
   ExpandInput();
 }
 
 template <typename TData>
 void ModelSingleStepBase<TData>::Output(float *host_out, bool wait, bool shift) {
-  auto stream_hp = Env().ForkHighPriority(event_out_start_.get());
+  auto stream_hp = ForkHighPriority(event_out_start_.get());
   if (!pinned_out_) {
     copy::Convert(host_out, dev_out_.get(), BatchSize(), stream_hp);
   }
   if (shift) ShiftX();
-  Env().JoinHighPriority(event_out_stop_.get());
+  JoinHighPriority(event_out_stop_.get());
   Env().JoinStreams();
   if (wait) OutputWait();
 }
@@ -209,9 +234,9 @@ void ModelSingleStepBase<TData>::OutputWait() {
 
 template <typename TData>
 void ModelSingleStepBase<TData>::ExpandInput() {
- if (!skip_replicate_) {
-  copy::Replicate(dev_x_expanded_.get(), dev_x_last_, NumFeatures(), NumSteps(), cuda_env_.Stream());
- }
+  if (!skip_replicate_) {
+    copy::Replicate(dev_x_expanded_.get(), dev_x_last_, NumFeatures(), NumSteps(), cuda_env_.Stream());
+  }
 }
 
 template <typename TData>
@@ -230,9 +255,8 @@ ModelSingleStepBase<TData>::Convert(const std::vector<float> &input) {
   }
 }
 template <typename TData>
-typename ModelSingleStepBase<TData>::Graph ModelSingleStepBase<TData>::Capture(float const *input,
-                                                                   float *host_out,
-                                                                   bool sequence_major) {
+typename ModelSingleStepBase<TData>::Graph ModelSingleStepBase<TData>::Capture(
+    float const *input, float *host_out, bool sequence_major) {
   return Capture([this, input, host_out, sequence_major]() {
     SetPinnedOut(host_out);
     Infer(input, sequence_major);
@@ -244,9 +268,8 @@ typename ModelSingleStepBase<TData>::Graph ModelSingleStepBase<TData>::Capture(f
 }
 
 template <typename TData>
-typename ModelSingleStepBase<TData>::Graph ModelSingleStepBase<TData>::Capture(half const *input,
-                                                                   float *host_out,
-                                                                   bool sequence_major) {
+typename ModelSingleStepBase<TData>::Graph ModelSingleStepBase<TData>::Capture(
+    half const *input, float *host_out, bool sequence_major) {
   return Capture([this, input, host_out, sequence_major]() {
     SetPinnedOut(host_out);
     Infer(input, sequence_major);
@@ -284,6 +307,13 @@ ModelInterface::Graph ModelSingleStepBase<TData>::Capture(const half **input, fl
 template <typename TData>
 ModelInterface::Graph ModelSingleStepBase<TData>::Capture(std::function<void()> const &ops) {
   auto stream = cuda_env_.Stream();
+#if USE_FP16_REG_L_GRAPH
+  // several steps per graph (an even number): a graph per starting parity, as with one step
+  StateCheck(steps_per_graph_ == 1 || steps_per_graph_ % 2 == 0);
+  auto const steps_per_graph = steps_per_graph_;
+#else
+  auto constexpr steps_per_graph = 1u;
+#endif
   auto const num_graphs = SingleStep() ? 2u : 1u;
   Graph result{num_graphs};
   result.reserve(num_graphs);
@@ -293,7 +323,12 @@ ModelInterface::Graph ModelSingleStepBase<TData>::Capture(std::function<void()> 
     cudaGraph_t graph;
     CudaCheck(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
     try {
-      ops();
+      for (auto step = 0u; step < steps_per_graph; ++step) {
+#if USE_FP16_REG_L_GRAPH
+        if (capture_prologue_) capture_prologue_(stream, odd_step_);
+#endif
+        ops();
+      }
     } catch (...) {
       cudaStreamEndCapture(stream, &graph);
       std::rethrow_exception(std::current_exception());
@@ -331,6 +366,8 @@ ModelInterface::Graph ModelSingleStepBase<TData>::Capture(std::function<void()> 
     CudaCheck(cudaGraphDestroy(graph));
     result.at(idx_graph) =
         Graph::value_type{graph_exec, [](cudaGraphExec_t ge) { CudaCheck(cudaGraphExecDestroy(ge)); }};
+    // an even number of steps ends at the parity it started at: the next graph starts at the other one
+    if (steps_per_graph % 2 == 0) ShiftX();
   }
   StateCheck(odd_step_start == odd_step_);
   return result;
@@ -345,6 +382,14 @@ void ModelSingleStepBase<TData>::Launch(ModelInterface::Graph &graph, cudaHostFn
   }
   odd_step_ = !odd_step_;
 }
+
+#if USE_FP16_REG_L_GRAPH
+template <typename TData>
+void ModelSingleStepBase<TData>::LaunchExec(cudaGraphExec_t const *graphs, unsigned steps_per_graph) {
+  CudaCheck(cudaGraphLaunch(graphs[odd_step_], cuda_env_.Stream()));
+  if (steps_per_graph % 2 != 0) odd_step_ = !odd_step_;  // an even number of steps keeps the parity
+}
+#endif
 
 template <typename TData>
 bool ModelSingleStepBase<TData>::Launched() {

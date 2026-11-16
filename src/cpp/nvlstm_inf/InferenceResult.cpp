@@ -7,8 +7,10 @@
 
 #include "InferenceResult.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 
 #include "util.h"
 
@@ -33,10 +35,11 @@ void InferenceResult::Save(char const *filename, Clock::time_point const &base) 
   util::SaveData(filename, shape, data);
 }
 
-void InferenceResult::AddBatch(std::uint32_t batch_size,
-                               float const *output,
-                               Clock::time_point const *ts_start,
-                               Clock::time_point const &ts_stop) {
+void InferenceResult::AddBatch(
+    std::uint32_t batch_size,
+    float const *output,
+    Clock::time_point const *ts_start,
+    Clock::time_point const &ts_stop) {
   output_.insert(output_.end(), output, output + batch_size);
   ts_start_.insert(ts_start_.end(), ts_start, ts_start + batch_size);
   ts_stop_.insert(ts_stop_.end(), batch_size, ts_stop);
@@ -56,7 +59,7 @@ void InferenceResult::Reserve(std::uint32_t batch_size) {
   }
 }
 
-InferenceResult::Clock::duration InferenceResult::Duration() const { 
+InferenceResult::Clock::duration InferenceResult::Duration() const {
   std::chrono::steady_clock::duration total{};
   auto const size = Size();
   for (std::size_t i = 0; i < size; ++i) {
@@ -65,19 +68,32 @@ InferenceResult::Clock::duration InferenceResult::Duration() const {
   return total;
 }
 
-InferenceResult::Clock::duration InferenceResult::P99() const { 
-  std::chrono::steady_clock::duration total{};
+InferenceResult::Clock::duration InferenceResult::P50() const {
   auto const size = Size();
-  std::vector<std::chrono::steady_clock::duration> d(size);
+  StateCheck(size > 0);
+  std::vector<Clock::duration> durations(size);
   for (std::size_t i = 0; i < size; ++i) {
-    d[i] = ts_stop_[i] - ts_start_[i];
+    durations[i] = ts_stop_[i] - ts_start_[i];
   }
-  std::sort(d.begin(), d.end(), [](auto a, auto b) {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(a).count() 
-        <  std::chrono::duration_cast<std::chrono::nanoseconds>(b).count();
-  });
-  int idxp99 = int(99.f / 100.f * size);
-  return d[idxp99];
+  auto const nth = durations.begin() + static_cast<std::ptrdiff_t>(size / 2);
+  std::nth_element(durations.begin(), nth, durations.end());
+  return *nth;
+}
+
+InferenceResult::Clock::duration InferenceResult::P99() const {
+  auto const size = Size();
+  StateCheck(size > 0);
+
+  std::vector<Clock::duration> durations(size);
+  for (std::size_t i = 0; i < size; ++i) {
+    durations[i] = ts_stop_[i] - ts_start_[i];
+  }
+
+  // Compute zero-based nearest-rank P99 using integer arithmetic.
+  auto const idxp99 = size - (size / 100) - 1;
+  auto const nth = durations.begin() + static_cast<std::ptrdiff_t>(idxp99);
+  std::nth_element(durations.begin(), nth, durations.end());
+  return *nth;
 }
 
 void InferenceResult::Reset() {

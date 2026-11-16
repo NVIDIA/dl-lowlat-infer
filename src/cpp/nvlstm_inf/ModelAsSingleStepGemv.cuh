@@ -8,19 +8,22 @@
 #ifndef NVLSTMINF_MODELASSINGLESTEPGEMV_CUH
 #define NVLSTMINF_MODELASSINGLESTEPGEMV_CUH
 
+#include <atomic>
+#include <thread>
 #include <type_traits>
 
-#include <thread>
-#include <atomic>
-
-#include "ModelPersistentBase.cuh"
-#include "ModelSingleStep.cuh"
 #include "CudaEnv.cuh"
 #include "ModelConfig.cuh"
 #include "ModelDef.h"
+#include "ModelPersistentBase.cuh"
+#include "ModelSingleStep.cuh"
 #include "cuda_helpers.cuh"
-#include "ss_gemv_impl/kernel_params.h"
+#include "ss_gemv_impl/fp16_reg/gemv_lstm_fp16_reg.h"
 #include "ss_gemv_impl/gemv_lstm.h"
+#include "ss_gemv_impl/kernel_params.h"
+#if USE_SINGLE_STEP_RESIDENT
+#include "single_step/single_step_resident.cuh"
+#endif
 
 #define PRECOMPUTE_OVERLAP 0
 #define PRECOMPUTE_SEPARATE_THREAD 0
@@ -35,59 +38,101 @@ class ModelAsSingleStepGemv : public ModelPersistentBase<TData> {
   using data_type = TData;
   using Base = ModelPersistentBase<TData>;
   using Base::Convert;
+  using Base::DeviceSignal;
   using Base::Env;
   using Base::HostSignal;
-  using Base::DeviceSignal;
   using Base::SignalReleaseDevice;
 
   using lstm_s_params_type = ssgemv::Lstm_s_bpt_params;
   using lstm_m_params_type = ssgemv::Lstm_m_tbc_t_params;
   using lstm_l_params_type = ssgemv::Lstm_l_dev_t_params;
 
-  ModelAsSingleStepGemv(CudaEnv &cuda_env,  // NOLINT(cppcoreguidelines-pro-type-member-init)
-                  ModelDef const &model_def,
-                  ModelConfig const &config = {});
+  /// FP16 lstm_s models run with the FP16 register-resident kernel in a build with it (USE_FP16_REG_KERNELS).
+  static constexpr bool kFp16RegS = USE_FP16_REG_KERNELS && std::is_same_v<TData, half>;
+  /// Whether this model runs with it: an FP16 model of lstm_s's sizes.
+  [[nodiscard]] bool Fp16RegS() const {
+    const ssgemv::Fp16_reg_model_dims dims{int(num_features_), int(num_units_), int(num_layers_)};
+    return kFp16RegS && dims == ssgemv::FP16_REG_LSTM_S_DIMS;
+  }
+  /// FP16 lstm_m models too, in a build with it (USE_FP16_REG_KERNELS).
+  static constexpr bool kFp16RegM = USE_FP16_REG_KERNELS && std::is_same_v<TData, half>;
+  /// Whether this model runs with it: an FP16 model of lstm_m's sizes, and ModelConfig::fp16_reg_m (main.cu: the CTAs
+  /// of all instances fit the device).
+  [[nodiscard]] bool Fp16RegM() const {
+    const ssgemv::Fp16_reg_model_dims dims{int(num_features_), int(num_units_), int(num_layers_)};
+    return kFp16RegM && config_.fp16_reg_m && dims == ssgemv::FP16_REG_LSTM_M_DIMS;
+  }
 
-  ModelAsSingleStepGemv(CudaEnv &cuda_env,  // NOLINT(cppcoreguidelines-pro-type-member-init)
-                  ModelDef const &model_def,
-                  std::uint32_t batch_size,
-                  ModelConfig const &config = {})
+  /// The model's weights on the device, in the layout of the kernel it runs with (Fp16RegS(), Fp16RegM(): the FP16
+  /// register-resident kernel's tile layout), and its precompute.
+  ModelAsSingleStepGemv(
+      CudaEnv &cuda_env,  // NOLINT(cppcoreguidelines-pro-type-member-init)
+      ModelDef const &model_def,
+      ModelConfig const &config = {});
+
+  ModelAsSingleStepGemv(
+      CudaEnv &cuda_env,  // NOLINT(cppcoreguidelines-pro-type-member-init)
+      ModelDef const &model_def,
+      std::uint32_t batch_size,
+      ModelConfig const &config = {})
       : ModelAsSingleStepGemv(cuda_env, model_def, config) {
     StateCheck(batch_size == 1);
   }
 
   ~ModelAsSingleStepGemv();
 
-  // Indicates whether the model ingests sliding windows or full windows. 
-  [[nodiscard]] bool Sliding() const override { return model_singe_step_->Sliding(); }
+  // Indicates whether the model ingests sliding windows or full windows (the resident precompute: sliding).
+  [[nodiscard]] bool Sliding() const override { return !model_singe_step_ || model_singe_step_->Sliding(); }
+
+  /// Whether the precompute is the resident SingleStep kernel (ModelConfig::precompute_resident), not the cuBLAS graph.
+  [[nodiscard]] bool Resident() const {
+#if USE_SINGLE_STEP_RESIDENT
+    return resident_ != nullptr;
+#else
+    return false;
+#endif
+  }
 
   // Indicates whether this is a PingPong model.
   [[nodiscard]] bool IsPingPong() const override { return false; }
 
   // Copy the initial steps - 1 onto the device.
-  void InitX(util::Tensor32 const &t) override { 
+  void InitX(util::Tensor32 const &t) override {
+#if USE_SINGLE_STEP_RESIDENT
+    if (resident_) {
+      // the resident precompute runs the first steps - 1 inputs through its windows, before the kernel's init signal:
+      // after it the kernel loads the states of step 0 at once
+      resident_->Init(t.Data().data(), static_cast<std::uint32_t>(t.Data().size() / num_features_));
+      resident_step_ = 0;
+    }
+#endif
     // Make sure we lock CPU barrier
     ssgemv::cpu_pingpong_handles::signal_release<uint>((uint *)HostSignal(), 0u);
     // set GPU kernel to reset its buffer counter.
     Base::template SignalReleaseDevice<false>(DEVICE_SPIN_UNTIL_INIT_SIGNAL_VALUE);
 #if DISABLE_ATOMIC_EXCHANGE == 1
-  Base::DeviceSignalSwitchReset();
-  //*DeviceSignal() = 0u;
+    Base::DeviceSignalSwitchReset();
+    //*DeviceSignal() = 0u;
 #endif
-    model_singe_step_->InitX(t); 
+    if (Resident() && !first_preprocess_) {
+      // The running kernel acknowledges the INIT once every CTA has it: the next step's go may replace it in the signal
+      // word only after that. (Before the first launch the kernel starts from this state anyway.)
+      ssgemv::cpu_pingpong_handles::poll_atomic<uint>((uint *)HostSignal(), HOST_SPIN_0_UNTIL_SIGNAL_VALUE, 0u);
+    }
+    if (!Resident()) model_singe_step_->InitX(t);
     odd_step_ = false;
   };
 
   // Copy the inference results to the host. The `wait` arguments determines whether this method blocks until the
   // async copy operation has finished.
-  void OutputImpl(float *host_out, bool wait, bool shift) { 
+  void OutputImpl(float *host_out, bool wait, bool shift) {
     Base::Output(host_out, wait, shift);
     if (shift) {
-    odd_step_ = !odd_step_;
+      odd_step_ = !odd_step_;
     }
   }
 
-  void Output(float *host_out, bool wait, bool shift) override { 
+  void Output(float *host_out, bool wait, bool shift) override {
     if (spawn_thread_) {
       // here we expect that previous Output call was completed
       output_params_.out.store(host_out, std::memory_order_release);
@@ -99,7 +144,7 @@ class ModelAsSingleStepGemv : public ModelPersistentBase<TData> {
     }
   }
 
-  bool OutputReady() override { 
+  bool OutputReady() override {
     if (spawn_thread_) {
       return !thread_output_.load(std::memory_order_acquire);
     } else {
@@ -107,39 +152,67 @@ class ModelAsSingleStepGemv : public ModelPersistentBase<TData> {
     }
   }
 
+  /// Launches the resident kernel on the instance's stream: the FP16 register-resident kernel where the model runs with
+  /// it (Fp16RegS(), Fp16RegM()), main's kernel of the model's size otherwise.
   void KernelLaunch() override {
-
     auto custom_stream = cuda_env_.CustomStream();
 
-    switch(num_features_) {
-      case LSTM_S_NUM_INPUTS: ssgemv::run_lstm_s_bpt(*static_cast<lstm_s_params_type *>(params_ptr_.get()), data_kind_, custom_stream); break;
-      case LSTM_M_NUM_INPUTS: ssgemv::run_lstm_m_tbc_t(*static_cast<lstm_m_params_type *>(params_ptr_.get()), data_kind_, custom_stream); break;
-      case LSTM_L_NUM_INPUTS: ssgemv::run_lstm_l_dev_t(*static_cast<lstm_l_params_type *>(params_ptr_.get()), data_kind_, custom_stream); break;
-      default: break;
+    switch (num_features_) {
+      case LSTM_S_NUM_INPUTS:
+        if constexpr (kFp16RegS) {
+          if (Fp16RegS()) {
+            ssgemv::run_lstm_s_fp16_reg_t(*static_cast<lstm_s_params_type *>(params_ptr_.get()), custom_stream);
+            break;
+          }
+        }
+        ssgemv::run_lstm_s_bpt(*static_cast<lstm_s_params_type *>(params_ptr_.get()), data_kind_, custom_stream);
+        break;
+      case LSTM_M_NUM_INPUTS:
+        if constexpr (kFp16RegM) {
+          if (Fp16RegM()) {
+            ssgemv::run_lstm_m_fp16_reg_t(*static_cast<lstm_m_params_type *>(params_ptr_.get()), custom_stream);
+            break;
+          }
+        }
+        ssgemv::run_lstm_m_tbc_t(*static_cast<lstm_m_params_type *>(params_ptr_.get()), data_kind_, custom_stream);
+        break;
+      case LSTM_L_NUM_INPUTS:
+        ssgemv::run_lstm_l_dev_t(*static_cast<lstm_l_params_type *>(params_ptr_.get()), data_kind_, custom_stream);
+        break;
+      default:
+        break;
     }
   }
 
   using ModelInterface::Output;
 
   // Capture the full inference CUDA graph.
-  ModelInterface::Graph Capture(float const *input, float *host_out, bool sequence_major) override { 
+  ModelInterface::Graph Capture(float const *input, float *host_out, bool sequence_major) override {
     Base::SetCaptureStates(&input, host_out, true);
-    return model_singe_step_->Capture(input, pinned_ref_out_.get(), sequence_major); }
+    if (Resident()) return ModelInterface::Graph();  // no per-step precompute graph
+    return model_singe_step_->Capture(input, pinned_ref_out_.get(), sequence_major);
+  }
 
   // Capture the full inference CUDA graph with FP16 input.
-  ModelInterface::Graph Capture(half const *input, float *host_out, bool sequence_major) override { 
+  ModelInterface::Graph Capture(half const *input, float *host_out, bool sequence_major) override {
     Base::SetCaptureStates(&input, host_out, true);
-    return model_singe_step_->Capture(input, pinned_ref_out_.get(), sequence_major); }
+    if (Resident()) return ModelInterface::Graph();  // no per-step precompute graph
+    return model_singe_step_->Capture(input, pinned_ref_out_.get(), sequence_major);
+  }
 
   // Capture the full inference CUDA graph with indirect copy.
   ModelInterface::Graph Capture(float const **input, float *host_out) override {
     Base::SetCaptureStates(input, host_out, false);
-    return model_singe_step_->Capture(input, pinned_ref_out_.get()); }
+    if (Resident()) return ModelInterface::Graph();  // no per-step precompute graph
+    return model_singe_step_->Capture(input, pinned_ref_out_.get());
+  }
 
   // Capture the full inference CUDA graph with indirect copy with FP16 input.
   ModelInterface::Graph Capture(half const **input, float *host_out) override {
     Base::SetCaptureStates(input, host_out, false);
-    return model_singe_step_->Capture(input, pinned_ref_out_.get()); }
+    if (Resident()) return ModelInterface::Graph();  // no per-step precompute graph
+    return model_singe_step_->Capture(input, pinned_ref_out_.get());
+  }
 
   void PreProcess() override;
 
@@ -158,95 +231,114 @@ class ModelAsSingleStepGemv : public ModelPersistentBase<TData> {
   void PostProcessWait() override;
 
   // Indicates that the last graph has been launched.
-  bool Launched() override {
-    throw std::runtime_error("Not Implemented.");
-  }
+  bool Launched() override { throw std::runtime_error("Not Implemented."); }
 
   // Store the input without running the inference (for sliding windows)
-  void StoreInput() override { model_singe_step_->StoreInput(); }
+  void StoreInput() override {
+    if (model_singe_step_) model_singe_step_->StoreInput();
+  }
 
-  ssgemv::Lstm_params_base* GetParamsPtr(){ return params_ptr_.get(); }
+  /// The resident precompute: this step's input, for the next step's states (after the step's launch, untimed).
+  void PostLaunch() override;
 
-  void Finalize () override;
+  ssgemv::Lstm_params_base *GetParamsPtr() { return params_ptr_.get(); }
 
-  private:
+  void Finalize() override;
 
-    void ThreadMain();
+ private:
+  void ThreadMain();
 
-    void PreProcessFirstImpl();
+  /// The first step's preprocess: launches the resident kernel, waits for its ready signal, and releases the first
+  /// step's states.
+  void PreProcessFirstImpl();
 
-    void PreProcessImpl();
+  void PreProcessImpl();
 
-    void PreCompute();
+  void PreCompute();
 
-    template <typename Params>
-    void InitParams (Params& params);
+  /// The kernel's parameters: weights, states, signals, input, and the FP16 register-resident kernel's exchange buffer.
+  template <typename Params>
+  void InitParams(Params &params);
 
-    // Binds params pointers to the internal array
-    void InitParams () override;
+  // Binds params pointers to the internal array
+  void InitParams() override;
 
-    void LaunchGemvLstm();
+  void LaunchGemvLstm();
 
-    CudaEnv &Env() { return cuda_env_; }
+  CudaEnv &Env() { return cuda_env_; }
 
-    const ssgemv::Data_kind data_kind_ = (std::is_same_v<TData, float>)? ssgemv::DATA_TYPE_FP32 : ssgemv::DATA_TYPE_FP16;
+  const ssgemv::Data_kind data_kind_ = (std::is_same_v<TData, float>) ? ssgemv::DATA_TYPE_FP32 : ssgemv::DATA_TYPE_FP16;
 
-    CudaEnv &cuda_env_;
+  CudaEnv &cuda_env_;
 
-    ModelConfig config_;
+  ModelConfig config_;
 
-    std::uint32_t const num_layers_, num_steps_, num_units_, num_features_;
+  std::uint32_t const num_layers_, num_steps_, num_units_, num_features_;
 
-    // Aggregation result is written here
+  // Aggregation result is written here
 #if AARCH64_GH == 1
-    cex::PagedPtr<float> pinned_ref_out_;
+  cex::PagedPtr<float> pinned_ref_out_;
 #else
-    cex::PinnedPtr<float> pinned_ref_out_;
+  cex::PinnedPtr<float> pinned_ref_out_;
 #endif
 
-    std::unique_ptr<ModelSingleStep<TData>> model_singe_step_;
+  // the cuBLAS precompute; none with the resident precompute
+  std::unique_ptr<ModelSingleStep<TData>> model_singe_step_;
+#if USE_SINGLE_STEP_RESIDENT
+  // config_.precompute_resident: the resident precompute, its stream (destroyed after it), and the inference step since
+  // the last InitX
+  cex::StreamPtr resident_stream_;
+  std::unique_ptr<single_step::SingleStepResident> resident_;
+  std::uint32_t resident_step_{0};
+#endif
 
-    // Pointers to the device memory with weight matrices applied to x
-    std::vector<cex::DevicePtr<data_type>> dev_input_weights_;
+  // Pointers to the device memory with weight matrices applied to x
+  std::vector<cex::DevicePtr<data_type>> dev_input_weights_;
 
-    // Pointers to the device memory with biases
-    std::vector<cex::DevicePtr<data_type>> dev_biases_;
+  // Pointers to the device memory with biases
+  std::vector<cex::DevicePtr<data_type>> dev_biases_;
 
-    // Weights for the dot product
-    // float for now
-    cex::DevicePtr<float> dev_mul_;
+  // Weights for the dot product
+  // float for now
+  cex::DevicePtr<float> dev_mul_;
 
-    // bias for final addition
-    float const bias_;
+  // bias for final addition
+  float const bias_;
 
-    // LSTM-C implementation uses it
-    cex::DevicePtr<data_type> dev_input_buf_;
+  // lstm_l only: the kernel's hidden-state output buffer (params.gmem_h_out)
+  cex::DevicePtr<data_type> dev_input_buf_;
+  /// The words the CTAs of the FP16 register-resident kernel exchange (lstm_m; params.gmem_xchg).
+  cex::DevicePtr<unsigned long long> dev_fp16_reg_xchg_;
 
-    params_base_type params_ptr_;
+  params_base_type params_ptr_;
 
-    // If we capture SingleStep graph, dev_cxs_in_/dev_cxs_out_ pointers
-    // are not swapped in Aggregate() anymore, so we need to remember to
-    // swap the pointers in SingleStepGemv explicitly.
-    // indicates that the next step is odd
-    bool odd_step_{false};
+  // If we capture SingleStep graph, dev_cxs_in_/dev_cxs_out_ pointers
+  // are not swapped in Aggregate() anymore, so we need to remember to
+  // swap the pointers in SingleStepGemv explicitly.
+  // indicates that the next step is odd
+  bool odd_step_{false};
 
-    //bool first_preprocess_{true};
-    std::atomic_bool first_preprocess_{true};
+  // bool first_preprocess_{true};
+  std::atomic_bool first_preprocess_{true};
 
-    // DEBUG!!!
-    //std::vector<cex::DevicePtr<data_type>> dev_cxs_in_;
+  // DEBUG!!!
+  // std::vector<cex::DevicePtr<data_type>> dev_cxs_in_;
 
-    bool spawn_thread_{true};
+  bool spawn_thread_{true};
 
-    std::thread thread_;
-    std::atomic_bool thread_exit_{false};
-    std::atomic_bool thread_preprocess_{false};
-    std::atomic_bool thread_output_{false};
+  std::thread thread_;
+  std::atomic_bool thread_exit_{false};
+  std::atomic_bool thread_preprocess_{false};
+  std::atomic_bool thread_output_{false};
 #if PRECOMPUTE_SEPARATE_THREAD == 1
-    std::atomic_bool thread_postprocess_{false};
+  std::atomic_bool thread_postprocess_{false};
 #endif
 
-    struct {std::atomic<float*> out; std::atomic_bool wait; std::atomic_bool shift;} output_params_;
+  struct {
+    std::atomic<float *> out;
+    std::atomic_bool wait;
+    std::atomic_bool shift;
+  } output_params_;
 };
 
 }  // namespace nvidia::quant::lowlat_infer

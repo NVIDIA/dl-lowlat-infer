@@ -1,8 +1,70 @@
 # Contribute to dl-lowlat-infer
 
-We require that all contributors "sign-off" on their commits, the below section describes this.
+## Development workflow
+
+1. Fork [NVIDIA/dl-lowlat-infer](https://github.com/NVIDIA/dl-lowlat-infer), or
+   use a branch in the main repository if you have write access.
+2. Create a feature or bug-fix branch from `main`.
+3. Make sure pre-commit checks pass and every commit is signed off.
+4. Open a pull request against `main` and describe the change and how you tested it.
+5. A maintainer reviews and merges the pull request.
+
+Do not report security vulnerabilities through public pull requests or issues.
+Follow [SECURITY.md](SECURITY.md) instead.
+
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) in this form:
+
+```text
+<type>(optional-scope): <imperative summary>
+```
+
+Keep the summary lowercase and do not end it with a period.
+
+Use one of these types:
+
+| Type | Usage |
+| --- | --- |
+| `feat` | New functionality |
+| `fix` | Bug fixes |
+| `perf` | Performance improvements |
+| `refactor` | Behavior-preserving code changes |
+| `docs` | Documentation-only changes |
+| `test` | Test additions or corrections |
+| `build` | Build-system or dependency changes |
+| `ci` | Continuous-integration changes |
+| `chore` | Maintenance not covered above |
+| `revert` | Revert an earlier commit |
+
+Examples:
+
+- `perf(single-step): speed up the precompute`
+- `fix(gdrcopy): order the signal write on aarch64`
+- `docs: document the contribution workflow`
+
+## Pre-commit checks
+
+The complete formatting and static-analysis workflow is documented in
+[CODING_GUIDELINES.md](CODING_GUIDELINES.md).
+
+Install and enable the hooks once per clone:
+
+```shell
+pip install pre-commit
+pre-commit install
+```
+
+The hooks run on every commit. They perform repository hygiene, formatting,
+linting, spelling, and DCO checks. Run every check manually with:
+
+```shell
+pre-commit run --all-files
+```
 
 ## Sign your work
+
+All contributors must sign off every commit as described below.
 
 The sign-off is a simple line at the end of the explanation for the patch. Your
 signature certifies that you wrote the patch or otherwise have the right to pass

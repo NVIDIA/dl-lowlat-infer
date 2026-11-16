@@ -11,3 +11,6 @@ IncludeCategories:
     Priority: 2
   - Regex: '^".*'
     Priority: 3
+WhitespaceSensitiveMacros:
+  - MaybeOmp1
+  - MaybeOmp2

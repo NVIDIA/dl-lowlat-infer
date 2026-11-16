@@ -6,11 +6,10 @@
 /* clang-format on */
 
 #include <gtest/gtest.h>
-
 #include <memory>
 #include <nvlstm_inf/CudaEnv.cuh>
-#include <nvlstm_inf/PingPongModelPersistent.cuh>
 #include <nvlstm_inf/ModelConfig.cuh>
+#include <nvlstm_inf/PingPongModelPersistent.cuh>
 #include <nvlstm_inf/cuda_helpers.cuh>
 #include <utility>
 
@@ -85,14 +84,14 @@ void TestLstmS(CudaEnv &cuda_env, std::uint32_t batch_size, float abs_error) {
   ASSERT_EQ(data.Shape().at(1), num_features);
 
   // See test/python/onnx_inf_test.py
-  std::array const expected{2.828571, 2.856524, 2.180112, 3.128277, 2.310311, 1.846714, 0.744907, 0.990764, 
-                            1.177333, 0.888849, 1.092423, 2.328708, 1.573656, 0.892719, 1.325031, 1.595074, 
-                            0.947756, 0.929175, 1.585958, 1.726998, 1.788090, 0.806547, 1.691239, 1.857200, 
-                            1.148445, 1.128221, 1.204678, 0.981003, -0.262372, -0.885408, -0.504753, -0.950921, 
-                            0.255792, -0.838356, 0.268282, -1.044721, -2.070024, -1.453503, -0.529929, -0.755342, 
-                            -1.329478, -0.939819, -1.247294, -0.791838, -0.740532, -1.823964, -2.484209, -2.471167, 
-                            -2.145804, -2.386509, -2.330149, -2.474677, -2.446797, -2.177483, -1.057186, 0.459029, 
-                            0.635510, 1.350941, 1.026807, 1.519344, 2.259581, 3.067355, 3.907224, 2.460680};
+  std::array const expected{2.828571,  2.856524,  2.180112,  3.128277,  2.310311,  1.846714,  0.744907,  0.990764,
+                            1.177333,  0.888849,  1.092423,  2.328708,  1.573656,  0.892719,  1.325031,  1.595074,
+                            0.947756,  0.929175,  1.585958,  1.726998,  1.788090,  0.806547,  1.691239,  1.857200,
+                            1.148445,  1.128221,  1.204678,  0.981003,  -0.262372, -0.885408, -0.504753, -0.950921,
+                            0.255792,  -0.838356, 0.268282,  -1.044721, -2.070024, -1.453503, -0.529929, -0.755342,
+                            -1.329478, -0.939819, -1.247294, -0.791838, -0.740532, -1.823964, -2.484209, -2.471167,
+                            -2.145804, -2.386509, -2.330149, -2.474677, -2.446797, -2.177483, -1.057186, 0.459029,
+                            0.635510,  1.350941,  1.026807,  1.519344,  2.259581,  3.067355,  3.907224,  2.460680};
 
   auto const num_steps = model_def.NumSteps();
   auto const init_size = (num_steps - 1) * num_features;
@@ -135,7 +134,8 @@ TEST_P(PingPongModelParamTest, InferenceLstmSHalf) {
   TestLstmS<half>(*cuda_env_, GetParam(), 4e-3);
 }
 
-INSTANTIATE_TEST_CASE_P(BatchSizeTests, PingPongModelParamTest, ::testing::Values(1));  // Single-step requires batch_size=1
+INSTANTIATE_TEST_CASE_P(
+    BatchSizeTests, PingPongModelParamTest, ::testing::Values(1));  // Single-step requires batch_size=1
 
 TEST_F(PingPongModelPersistentTest, InferenceLstmS) {
   // TODO: Skipped pending reference output generation and validation logic for ping pong model
@@ -156,14 +156,14 @@ TEST_F(PingPongModelPersistentTest, InferenceLstmS) {
   ASSERT_EQ(data.Shape().at(1), num_features);
 
   // See test/python/onnx_inf_test.py
-  std::array const expected{2.828571, 2.856524, 2.180112, 3.128277, 2.310311, 1.846714, 0.744907, 0.990764, 
-                            1.177333, 0.888849, 1.092423, 2.328708, 1.573656, 0.892719, 1.325031, 1.595074, 
-                            0.947756, 0.929175, 1.585958, 1.726998, 1.788090, 0.806547, 1.691239, 1.857200, 
-                            1.148445, 1.128221, 1.204678, 0.981003, -0.262372, -0.885408, -0.504753, -0.950921, 
-                            0.255792, -0.838356, 0.268282, -1.044721, -2.070024, -1.453503, -0.529929, -0.755342, 
-                            -1.329478, -0.939819, -1.247294, -0.791838, -0.740532, -1.823964, -2.484209, -2.471167, 
-                            -2.145804, -2.386509, -2.330149, -2.474677, -2.446797, -2.177483, -1.057186, 0.459029, 
-                            0.635510, 1.350941, 1.026807, 1.519344, 2.259581, 3.067355, 3.907224, 2.460680};
+  std::array const expected{2.828571,  2.856524,  2.180112,  3.128277,  2.310311,  1.846714,  0.744907,  0.990764,
+                            1.177333,  0.888849,  1.092423,  2.328708,  1.573656,  0.892719,  1.325031,  1.595074,
+                            0.947756,  0.929175,  1.585958,  1.726998,  1.788090,  0.806547,  1.691239,  1.857200,
+                            1.148445,  1.128221,  1.204678,  0.981003,  -0.262372, -0.885408, -0.504753, -0.950921,
+                            0.255792,  -0.838356, 0.268282,  -1.044721, -2.070024, -1.453503, -0.529929, -0.755342,
+                            -1.329478, -0.939819, -1.247294, -0.791838, -0.740532, -1.823964, -2.484209, -2.471167,
+                            -2.145804, -2.386509, -2.330149, -2.474677, -2.446797, -2.177483, -1.057186, 0.459029,
+                            0.635510,  1.350941,  1.026807,  1.519344,  2.259581,  3.067355,  3.907224,  2.460680};
 
   auto const num_steps = model_def.NumSteps();
   auto const init_size = (num_steps - 1) * batch_size * num_features;
@@ -178,8 +178,7 @@ TEST_F(PingPongModelPersistentTest, InferenceLstmS) {
   auto input = cex::MallocHost<float>(num_features * batch_size);
   auto output = cex::MallocHost<float>(batch_size);
 
-  for (std::size_t offset = 0; offset < expected.size(); ++offset) 
-  { 
+  for (std::size_t offset = 0; offset < expected.size(); ++offset) {
     cex::Copy(input, data_start + offset * num_features, num_features, cuda_env_->Stream());
     model.PreProcess();
     model.Infer(input.get());

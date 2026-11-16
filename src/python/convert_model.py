@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse as _ap
-import onnx as _ox
-import numpy as np
-import os
-import shutil
 import pathlib
-import sys
+import shutil
 
-#sys.path.append(os.getcwd())  # This is the Test Harness directory
+import numpy as np
+import onnx as _ox
+
+# sys.path.append(os.getcwd())  # This is the Test Harness directory
+
 
 def parse(args=None) -> _ap.Namespace:
     parser = _ap.ArgumentParser(description="ONNX Model Converter")
@@ -20,7 +20,7 @@ def parse(args=None) -> _ap.Namespace:
 
 
 def decode_tensor(t) -> np.ndarray:
-    assert (t.data_type == 1)
+    assert t.data_type == 1
     array = np.frombuffer(t.raw_data, np.dtype("<f4"))
     return array.reshape(t.dims)
 
@@ -43,7 +43,7 @@ def convert(model=None) -> None:
     model_def = _ox.load_model(str(model_path))
     graph = model_def.graph
 
-    assert (len(graph.input) == 1)
+    assert len(graph.input) == 1
     input_dims = graph.input[0].type.tensor_type.shape.dim
     num_steps = input_dims[1].dim_value
     num_features = input_dims[2].dim_value
@@ -55,7 +55,6 @@ def convert(model=None) -> None:
     layer_index = 0
 
     for node in graph.node:
-            
         if node.op_type == "LSTM":
             input_W = decode_tensor(initializers[node.input[1]])
             np.save(str(output_dir / f"lstm_{layer_index}_W.npy"), input_W, allow_pickle=False)
@@ -75,8 +74,8 @@ def convert(model=None) -> None:
             input_B = input_B.transpose(1, 0)
             np.save(str(output_dir / "mul.npy"), input_B, allow_pickle=False)
             print(f"Info: {node.name} - B: {input_B.shape}")
-            assert input_B.shape == (expected_input_size, 1) if layer_index > 0 \
-                else (expected_input_size * num_steps, 1)
+            expected_shape = (expected_input_size, 1) if layer_index > 0 else (expected_input_size * num_steps, 1)
+            assert input_B.shape == expected_shape
             print(f"Info: {node.name} - B: {input_B.shape}")
             if len(node.input) > 2:
                 input_B = decode_tensor(initializers[node.input[2]])
@@ -86,8 +85,8 @@ def convert(model=None) -> None:
         elif node.op_type == "MatMul":
             input_B = decode_tensor(initializers[node.input[1]])
             np.save(str(output_dir / "mul.npy"), input_B, allow_pickle=False)
-            assert input_B.shape == (expected_input_size, 1) if layer_index > 0 \
-                else (expected_input_size * num_steps, 1)
+            expected_shape = (expected_input_size, 1) if layer_index > 0 else (expected_input_size * num_steps, 1)
+            assert input_B.shape == expected_shape
             print(f"Info: {node.name} - B: {input_B.shape}")
         # elif node.op_type == "Add":
         #     input_B = decode_tensor(initializers[node.input[1]])

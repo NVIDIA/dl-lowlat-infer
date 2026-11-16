@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
-import numpy as np
 
+import numpy as np
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -32,9 +32,9 @@ if __name__ == "__main__":
     if args.verbose:
         n = min(args.verbose, size)
         for r, o in zip(ref[0:n, 0], out[0:n, 0]):
-            print(
-                f"Reference = {r}, Output = {o}, Difference = {abs(r - o)}, Result is { '💚' if abs(r - o) < args.eps else '💔'}"
-            )
+            difference = abs(r - o)
+            status = "💚" if difference < args.eps else "💔"
+            print(f"Reference = {r}, Output = {o}, Difference = {difference}, Result is {status}")
         print(f"Maximum absolute difference is {np.max(np.abs(diff))}")
 
     if np.max(np.abs(diff)) > args.eps:

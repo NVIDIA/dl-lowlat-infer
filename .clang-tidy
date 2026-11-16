@@ -1,0 +1,49 @@
+---
+# All checks on, then subtract noise.
+# Listed Altera checks: FPGA/OpenCL, not NVIDIA host C++.
+# boost-use-ranges: no Boost.Range dependency.
+# cppcoreguidelines-avoid-do-while / pointer-arithmetic / reinterpret-cast / vararg:
+#   persistent loops and CUDA/GDR buffer code.
+# Listed Fuchsia checks: Fuchsia OS style, not this repo.
+# hicpp-vararg: alias of cppcoreguidelines-pro-type-vararg (must disable both with *).
+# llvm-else-after-return: style only.
+# llvmlibc-*: libc implementation rules.
+# misc-include-cleaner: IWYU; noisy with CUDA headers.
+# misc-non-private-member-variables-in-classes: POD/kernel param structs.
+# modernize-use-trailing-return-type: not our function style
+#   (also conflicts with fuchsia-trailing-return).
+# Only flag runs of at least three easily swappable parameters; pairs are
+# common in the existing APIs and remain distinguishable by their names.
+Checks: >
+  *,
+  -altera-id-dependent-backward-branch,
+  -altera-struct-pack-align,
+  -altera-unroll-loops,
+  -boost-use-ranges,
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-vararg,
+  -fuchsia-default-arguments-calls,
+  -fuchsia-default-arguments-declarations,
+  -fuchsia-multiple-inheritance,
+  -fuchsia-overloaded-operator,
+  -fuchsia-statically-constructed-objects,
+  -fuchsia-trailing-return,
+  -fuchsia-virtual-inheritance,
+  -hicpp-vararg,
+  -llvm-else-after-return,
+  -llvmlibc-*,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -modernize-use-trailing-return-type
+CheckOptions:
+  bugprone-easily-swappable-parameters.MinimumLength: '3'
+WarningsAsErrors: >
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*
+HeaderFilterRegex: '^(.*/)?(src|test)/'
+FormatStyle: file

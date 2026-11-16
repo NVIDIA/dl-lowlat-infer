@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string>
+
 #include "CudaEnv.cuh"
 #include "LstmConstants.hpp"
 #include "ModelConfig.cuh"
@@ -102,12 +104,18 @@ class ModelSingleStep : public ModelSingleStepBase<TData> {
   cex::DevicePtr<data_type*> dev_hxs_ptrs_;
   cex::DevicePtr<data_type*> dev_gemms_ptrs_;
 
+  // Replaces the heuristic's pick for layer's descriptors (m x n x k) with the cache file's tuned algorithm, if it has
+  // one for this device, SM count and cublasLt version that passes cublasLtMatmulAlgoCheck.
+  void UseTunedAlgorithm(std::string const& path, int layer, int m, int n, int k);
+
   // cublasLt interface
   bool use_cublas_lt_ = false;
   cex::DevicePtr<char*> workspace_lt_;
-  size_t workspace_lt_bytes_ = 1024 * 1024 * 1024;
+  // The heuristic's first pick without workspace.  Allowing workspace makes it prefer split-K with a separate
+  // reduction kernel, which is slower for the small precompute GEMMs.
+  size_t workspace_lt_bytes_ = 0;
   static constexpr int MAX_HEUR_RES_ = 4;
-  static constexpr int ALGO_NUM_ = 2;
+  static constexpr int ALGO_NUM_ = 0;
   cublasLtMatmulHeuristicResult_t heuristic_results_lt_[2][MAX_HEUR_RES_];
   cublasLtMatmulAlgo_t algos_lt_[2];
   // descriptors

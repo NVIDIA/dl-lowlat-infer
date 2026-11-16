@@ -10,9 +10,8 @@
 #include <utility>
 
 #ifdef USE_NVTX
-#include <unistd.h>
-
 #include <nvtx3/nvtx3.hpp>
+#include <unistd.h>
 #endif
 
 #include "Benchmark.cuh"
@@ -22,12 +21,12 @@
 namespace nvidia::quant::lowlat_infer {
 
 Benchmark::Benchmark(
-    std::filesystem::path const& path_data,
-    std::filesystem::path const& path_model,
+    std::filesystem::path const &path_data,
+    std::filesystem::path const &path_model,
     SamplerConfig sampler_config,
     std::uint32_t num_instances,
     std::uint32_t batch_size,
-    ModelConfig const& config,
+    ModelConfig const &config,
     bool stage,
     bool reap,
     util::CpuSet cpu_set,
@@ -42,7 +41,6 @@ Benchmark::Benchmark(
       cpu_set_{std::move(cpu_set)},
       grace_period_{grace_period},
       use_precompute_green_context_{use_precompute_green_context} {
-
   ModelDef model_def{path_model.c_str(), config.ping_pong_model_persistent};
 
   cex::PinnedTensor16 data16{};
@@ -59,11 +57,12 @@ Benchmark::Benchmark(
 
   green_contexts_ = green_contexts;
 
-  use_threads_in_models_ = (green_contexts_.size() >=1) && (cpu_set_.size() >= (reap? 2 : 1) + num_instances);
+  use_threads_in_models_ = (green_contexts_.size() >= 1) && (cpu_set_.size() >= (reap ? 2 : 1) + num_instances);
 
   models_.resize(num_instances);
   for (std::size_t i = 0; i < num_instances; ++i) {
-    models_[i] = InitModel(sampler_config, batch_size, config, stage, reap, use_omp, data16, data32, model_def, clones, i);
+    models_[i] =
+        InitModel(sampler_config, batch_size, config, stage, reap, use_omp, data16, data32, model_def, clones, i);
     models_[i]->SetModelId(i);
     if (i == 0) {
       use_omp = models_[0]->UseOmp();
@@ -87,12 +86,15 @@ std::unique_ptr<ModelInstance> Benchmark::InitModel(
   ModelInstance::ModelVector models{clones};
 
   for (std::uint32_t j = 0; j < clones; ++j) {
-    if (green_contexts_.size() >=1) {
-      int core_id = (use_threads_in_models_)? cpu_set_[(reap? 2 : 1) + i] : -1;
+    if (green_contexts_.size() >= 1) {
+      int core_id = (use_threads_in_models_) ? cpu_set_[(reap ? 2 : 1) + i] : -1;
       if (use_precompute_green_context_) {
-        cuda_envs_.push_back(std::make_unique<CudaEnv>(false, true, config.use_gdrcopy, green_contexts_[i], green_contexts_.back(), core_id));
+        cuda_envs_.push_back(
+            std::make_unique<CudaEnv>(
+                false, true, config.use_gdrcopy, green_contexts_[i], green_contexts_.back(), core_id));
       } else {
-        cuda_envs_.push_back(std::make_unique<CudaEnv>(false, true, config.use_gdrcopy, green_contexts_[i], nullptr, core_id));
+        cuda_envs_.push_back(
+            std::make_unique<CudaEnv>(false, true, config.use_gdrcopy, green_contexts_[i], nullptr, core_id));
       }
     } else {
       cuda_envs_.push_back(std::make_unique<CudaEnv>(false, true, config.use_gdrcopy));
@@ -102,9 +104,9 @@ std::unique_ptr<ModelInstance> Benchmark::InitModel(
   std::unique_ptr<util::DataSampler> seq;
   std::size_t n_samples = (config.Precision() == 32) ? data32.Shape().at(0) : data16.Shape().at(0);
   if (sampler_config.sampler_type == SamplerType::Random) {
-      seq = std::make_unique<util::RandomSampler>(sampler_config.base_seed, i, n_samples);
+    seq = std::make_unique<util::RandomSampler>(sampler_config.base_seed, i, n_samples);
   } else {
-      seq = std::make_unique<util::RingSampler>(sampler_config.base_seed, i, n_samples);
+    seq = std::make_unique<util::RingSampler>(sampler_config.base_seed, i, n_samples);
   }
   ModelInstance::AnyDataIterator data_iterator;
   if (config.Precision() == 32) {
@@ -224,9 +226,8 @@ Benchmark::ResultVector Benchmark::Results() const {
 
 void Benchmark::Save(const std::filesystem::path &base_path) { Save(base_path, Results(), ts_base_); }
 
-void Benchmark::Save(const std::filesystem::path &base_path,
-                     const Benchmark::ResultVector &results,
-                     Clock::time_point const &ts_base) {
+void Benchmark::Save(
+    const std::filesystem::path &base_path, const Benchmark::ResultVector &results, Clock::time_point const &ts_base) {
   auto const num_instances = results.size();
   for (std::size_t i = 0; i < num_instances; ++i) {
     std::filesystem::path filepath{base_path};

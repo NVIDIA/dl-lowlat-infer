@@ -5,13 +5,15 @@
  */
 /* clang-format on */
 
+#include <cstdio>
 #include <cub/cub.cuh>
 
 #include "ModelSingleStep.cuh"
+#include "single_step/lt_algo_cache.h"
+#include "single_step/single_step.cuh"
 #include "ss_gemv_impl/gemv_lstm.h"
 #include "ss_gemv_impl/gemv_lstm_utils.cuh"
 #include "ss_gemv_impl/kernel_params.h"
-#include "single_step/single_step.cuh"
 #include "util.h"
 
 namespace nvidia::quant::lowlat_infer {
@@ -51,12 +53,13 @@ namespace {
 
 template <typename TData>
 ModelSingleStep<TData>::ModelSingleStep(CudaEnv& cuda_env, const ModelDef& model_def, const ModelConfig& config)
-    : Base{cuda_env, model_def, 1, {.skip_scalar_product = config.skip_scalar_product_in_precompute, .streaming = isStreaming(config)}},
+    : Base{cuda_env, model_def, 1, {.streaming = isStreaming(config), .single_stream = config.precompute_single_stream}},
       num_hidden_rows_{getNumHiddenRows(config, model_def.NumSteps())},
       output_row_offset_{getOutputRowOffset(config)},
       num_layers_{model_def.NumLayers()},
       pre_compute_{config.pre_compute},
-      use_cublas_lt_{config.use_cublas_lt} {
+      // cublasLt runs only the input GEMM of layers >= 1 (K = units); a single-layer model has none.
+      use_cublas_lt_{config.use_cublas_lt && model_def.NumLayers() > 1} {
   StateCheck(BatchSize() == 1);
 
   cuda_env.CreateStreams(1);
@@ -177,7 +180,7 @@ ModelSingleStep<TData>::ModelSingleStep(CudaEnv& cuda_env, const ModelDef& model
     dev_gemms_ptrs[layer] = dev_gemms_[layer].Get();
   }  // for layer
 
-  // batched gemm interface requries pointers in device memory
+  // batched gemm interface requires pointers in device memory
   cex::Copy(dev_recurrent_weights_ptrs_.get(), dev_recurrent_weights_ptrs.data(), num_layers_, stream);
   cex::Copy(dev_hxs_ptrs_.get(), dev_hxs_ptrs.data(), num_layers_, stream);
   cex::Copy(dev_gemms_ptrs_.get(), dev_gemms_ptrs.data(), num_layers_, stream);
@@ -204,7 +207,6 @@ ModelSingleStep<TData>::ModelSingleStep(CudaEnv& cuda_env, const ModelDef& model
         operation_lt_desc_, CUBLASLT_MATMUL_DESC_TRANSA, &transpose_a, sizeof(transpose_a)));
     CublasCheck(cublasLtMatmulDescSetAttribute(
         operation_lt_desc_, CUBLASLT_MATMUL_DESC_TRANSB, &transpose_b, sizeof(transpose_b)));
-    StateCheck(num_layers_ >= 2);
     // reset workspace size, since will recalculate after the heuristic
     workspace_lt_bytes_ = 0;
     a_desc_lt_.resize(2);
@@ -257,10 +259,49 @@ ModelSingleStep<TData>::ModelSingleStep(CudaEnv& cuda_env, const ModelDef& model
           &(heuristic_results_lt_[layer][ALGO_NUM_].algo),
           &heuristic_results_lt_[layer][ALGO_NUM_]));
 
+      if (!config.lt_algo_cache.empty()) UseTunedAlgorithm(config.lt_algo_cache, layer, rows_a, cols_b, rows_b);
+
       workspace_lt_bytes_ = std::max(workspace_lt_bytes_, heuristic_results_lt_[layer][ALGO_NUM_].workspaceSize);
     }
     workspace_lt_ = cex::Malloc<char*>(workspace_lt_bytes_);
+  } else if (!config.lt_algo_cache.empty()) {
+    std::fprintf(stderr, "[lt-algo-cache] not used: only half precision with more than one layer runs cublasLt\n");
   }
+}
+
+template <typename TData>
+void ModelSingleStep<TData>::UseTunedAlgorithm(std::string const& path, int layer, int m, int n, int k) {
+  auto constexpr cuda_data_type = single_step::getCudaDataType<TData>();
+  cublasComputeType_t constexpr compute_type = (cuda_data_type == CUDA_R_32F) ? CUBLAS_COMPUTE_32F : CUBLAS_COMPUTE_16F;
+  int device_id = 0;
+  CudaCheck(cudaGetDevice(&device_id));
+  // The SMs this model's GEMMs run on: its precompute's green context, if any, otherwise the device.
+  auto const sm_count = GetSmCountFromGreenStream(Env().Stream());
+  auto const key = lt_cache::MakeKey(device_id, sm_count, cuda_data_type, compute_type, m, n, k);
+  auto const entries = lt_cache::Load(path);
+  auto const* hit = lt_cache::Find(entries, key);
+  cublasLtMatmulHeuristicResult_t checked{};
+  bool const usable = hit != nullptr && cublasLtMatmulAlgoCheck(
+                                            Env().CublasLt(),
+                                            operation_lt_desc_,
+                                            a_desc_lt_[layer],
+                                            b_desc_lt_[layer],
+                                            c_desc_lt_[layer],
+                                            d_desc_lt_[layer],
+                                            &hit->algo,
+                                            &checked) == CUBLAS_STATUS_SUCCESS;
+  if (usable) {
+    checked.algo = hit->algo;
+    heuristic_results_lt_[layer][ALGO_NUM_] = checked;
+  }
+  std::fprintf(
+      stderr,
+      "[lt-algo-cache] m=%d n=%d k=%d on %d SMs: %s\n",
+      m,
+      n,
+      k,
+      key.sm_count,
+      usable ? "tuned algorithm" : (hit == nullptr ? "no entry, heuristic" : "entry rejected, heuristic"));
 }
 
 template <typename TData>
@@ -292,7 +333,11 @@ void ModelSingleStep<TData>::LstmForward() {
   dim3 const dim_block{static_cast<unsigned int>(num_units)};
   dim3 const dim_grid{num_steps};
 
-  if (!pre_compute_) {
+  // Without pre_compute_ the hidden-state GEMM for the next call runs here, on a forked stream unless everything stays
+  // on the main stream. The persistent models always run without pre_compute_ (main.cu, ModelAsSingleStepGemv), so for
+  // them SingleStream() alone decides; a standalone SingleStep model (--pre-compute=0) keeps the fork.
+  bool const fork = !pre_compute_ && !Base::SingleStream();
+  if (fork) {
     Env().ForkStreams(event_inf_start_.get());
   }
   auto stream = Env().Stream();
@@ -318,6 +363,7 @@ void ModelSingleStep<TData>::LstmForward() {
           dev_input_weights_[layer].LeadingDim(),
           Base::GetDevXLast(),
           num_features,
+          Base::Layer0InputProduct(),
           DevY().get(),
           gemm_h,
           gemm_leading_dim,
@@ -400,6 +446,9 @@ void ModelSingleStep<TData>::LstmForward() {
           num_units,
           num_steps,
           DevY().get(),
+          Base::OutputTarget(),
+          Base::DevMul(),
+          Base::Bias(),
           gemm_h,
           gemm_x,
           gemm_leading_dim,
@@ -420,7 +469,7 @@ void ModelSingleStep<TData>::LstmForward() {
 
   if (!pre_compute_) {
     // Preparation for the next call
-    PrepareHiddenState(Env().Streams(0));
+    PrepareHiddenState(fork ? Env().Streams(0) : stream);
     Env().JoinStreams();  // join any remaining forked streams
   }
 }
@@ -486,8 +535,10 @@ void ModelSingleStep<TData>::InitX(util::Tensor32 const& t) {
 
 template <typename TData>
 void ModelSingleStep<TData>::Aggregate() {
-  Base::Aggregate();
-
+  // rnn_lstm aggregates non-vectorized multi-layer models; other paths require a separate kernel.
+  if (num_layers_ == 1 || GEMM_H_VECTORIZED == 1) {
+    Base::Aggregate();
+  }
   for (std::uint32_t layer = 0; layer < num_layers_; ++layer) {
     dev_cxs_in_[layer].Array().swap(dev_cxs_out_[layer].Array());
   }

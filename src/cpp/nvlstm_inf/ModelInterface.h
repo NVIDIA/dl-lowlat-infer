@@ -47,9 +47,7 @@ class ModelInterface {
   virtual void InitX(util::Tensor32 const &t) = 0;
 
   // Resets the internal state
-  void Reset() {
-    InitX(util::Tensor32{util::Vector32{}, util::ShapeVector{0, 0}});
-  }
+  void Reset() { InitX(util::Tensor32{util::Vector32{}, util::ShapeVector{0, 0}}); }
 
   // Copy new input from host to device dev_x_. For the non-Sliding() case, sequence_major indicates that the
   // input data was transposed to sequence major layout.
@@ -137,17 +135,19 @@ class ModelInterface {
   virtual Graph Capture(half const **input, float *host_out) = 0;
 
   // Launch the full inference CUDA graph without a callback.
-  void Launch(Graph &graph) {
-    Launch(graph, nullptr, nullptr);
-  }
+  void Launch(Graph &graph) { Launch(graph, nullptr, nullptr); }
 
-  virtual void Finalize() { };
+  virtual void Finalize() {};
 
   // Launch the full inference CUDA graph with a callback.
   virtual void Launch(Graph &graph, cudaHostFn_t call_back, void *user_data) = 0;
 
   // Indicates that the last graph has been launched.
   virtual bool Launched() = 0;
+
+  // Called after ``Launch()`` once the launch has been handed over for timing, so work done here does not delay the
+  // recorded stop time (with a separate reaper thread).
+  virtual void PostLaunch() {}
 
   // Store the input without running the inference (for sliding windows)
   virtual void StoreInput() = 0;

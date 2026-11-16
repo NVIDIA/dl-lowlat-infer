@@ -20,9 +20,8 @@ The inference loop consists of the following steps. We describe them in pseudo P
 def inference_loop():
     input = fetch_next_event()
     start_timing()
-    copy_to_device(input);
-    signal_input_ready();
-
+    copy_to_device(input)
+    signal_input_ready()
     while not signal_output_ready():
         pass
 
@@ -138,7 +137,7 @@ Current implementations:
 * **ModelSingleStep (Streaming)** - Streaming variant of ModelSingleStep selected via `SingleStepStreaming` algorithm. Preserves hidden/cell states across sliding window shifts for continuous inference. cuBLAS-based implementation (extends ModelSingleStepBase).
 * **ModelSingleStepGemv** ([ModelSingleStepGemv.cuh](../src/cpp/nvlstm_inf/ModelSingleStepGemv.cuh)) - Persistent timing using custom GEMV kernels (extends ModelPersistentBase)
 * **ModelAsSingleStepGemv** ([ModelAsSingleStepGemv.cuh](../src/cpp/nvlstm_inf/ModelAsSingleStepGemv.cuh)) - Advanced persistent timing with pre-launched kernels (extends ModelPersistentBase)
-* **PingPongModelPersistent** ([PingPongModelPersistent.cuh](../src/cpp/nvlstm_inf/PingPongModelPersistent.cuh)) - Baseline null model for measurements (extends ModelPersistentBase)
+* **PingPongModelPersistent** ([PingPongModelPersistent.cuh](../src/cpp/nvlstm_inf/PingPongModelPersistent.cuh)) - Baseline ping-pong model for measurements (extends ModelPersistentBase)
 
 **Note**: Future work will add streaming support to persistent kernel implementations.
 
@@ -196,5 +195,4 @@ The Benchmark defines the following networks:
 |--------|----------------|-----------------|--------------|---------------------|
 | lstm_s | 128            | 64              | 2            | 96                  |
 | lstm_m | 192            | 96              | 3            | 160                 |
-| lstm_l | 512            | 128             | 4            | 736                 |          
-
+| lstm_l | 512            | 128             | 4            | 736                 |

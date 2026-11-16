@@ -9,9 +9,8 @@
 #define NLSTMINF_SRC_CPP_NVLSTMINF_CUDAENV_CUH_
 
 #include <cassert>
-#include <cublas_v2.h>
 #include <cublasLt.h>
-
+#include <cublas_v2.h>
 #include <stdexcept>
 #include <vector>
 
@@ -32,10 +31,9 @@ extern GreenContextsVector g_contexts;
 class GreenContext {
  public:
   GreenContext(CUdevResource resource, int current_device_id = 0) : resource_(resource) {
-
     CuCheck(cuDeviceGet(&current_device_, current_device_id));
     // step 3
-    const int num_resources = 1; // Has to be 1​
+    const int num_resources = 1;  // Has to be 1​
     CuCheck(cuDevResourceGenerateDesc(&resource_desc_, &resource_, num_resources));
 
     // Step (4) ​
@@ -45,59 +43,73 @@ class GreenContext {
     // Step (5) ​
     CuCheck(cuCtxFromGreenCtx(&ctx_from_green_ctx_, green_ctx_));
 
-    CuCheck(cuCtxGetId( ctx_from_green_ctx_, &ctx_id_ ));
+    CuCheck(cuCtxGetId(ctx_from_green_ctx_, &ctx_id_));
   }
 
-  ~GreenContext() {
-    CuCheck(cuGreenCtxDestroy(green_ctx_));
-  }
+  ~GreenContext() { CuCheck(cuGreenCtxDestroy(green_ctx_)); }
 
-  CUgreenCtx get() {
-    return green_ctx_;
-  }
+  CUgreenCtx get() { return green_ctx_; }
 
-  unsigned long long get_id() {
-    return ctx_id_;
-  }
+  unsigned long long get_id() { return ctx_id_; }
 
-  void SetCurrent() {
-    CuCheck(cuCtxSetCurrent(ctx_from_green_ctx_));
-  }
+  void SetCurrent() { CuCheck(cuCtxSetCurrent(ctx_from_green_ctx_)); }
 
  private:
-
-  CUdevice          current_device_;
-  CUdevResource     resource_;
+  CUdevice current_device_;
+  CUdevResource resource_;
   CUdevResourceDesc resource_desc_;
-  CUgreenCtx        green_ctx_;
-  CUcontext         ctx_from_green_ctx_;
+  CUgreenCtx green_ctx_;
+  CUcontext ctx_from_green_ctx_;
 
   unsigned long long ctx_id_;
 };
 
-GreenContextsVector CreateGreenContexts(std::uint32_t num_units,
-                         std::uint32_t num_instances, int sm_arch, int device_id = 0,
-                         CUcontext* primary_ctx_ptr = nullptr, bool use_precompute_green_context = false, bool is_ping_pong_model = false);
+/// One green context per instance and one for the rest of the device (the precompute), for a model of num_units units.
+/// fp16_reg_m: the instances run lstm_m with the FP16 register-resident kernel, whose partitions must hold its CTAs (as
+/// one cluster with dsmem_exchange).
+GreenContextsVector CreateGreenContexts(
+    std::uint32_t num_units,
+    std::uint32_t num_instances,
+    int sm_arch,
+    int device_id = 0,
+    CUcontext *primary_ctx_ptr = nullptr,
+    bool use_precompute_green_context = false,
+    bool is_ping_pong_model = false,
+    bool fp16_reg_m = false);
 
-GreenContextsVector CreateGreenContexts(std::filesystem::path const &path_model,
-                          std::uint32_t num_instances, int sm_arch, int device_id = 0,
-                          bool use_precompute_green_context = false, bool is_ping_pong_model = false);
+/// As above, for the model at path_model.
+GreenContextsVector CreateGreenContexts(
+    std::filesystem::path const &path_model,
+    std::uint32_t num_instances,
+    int sm_arch,
+    int device_id = 0,
+    bool use_precompute_green_context = false,
+    bool is_ping_pong_model = false,
+    bool fp16_reg_m = false);
 
+/// SMs of the green context the stream belongs to; 0 for a stream outside green contexts.
 int GetSmCountFromGreenStream(cudaStream_t stream);
 unsigned long long GetCtxIdFromGreenStream(cudaStream_t stream);
 
 class CudaEnv {
  public:
-  explicit CudaEnv(bool lenient = false, bool create_stream = false, bool use_gdrcopy = false,
-                   std::shared_ptr<GreenContext> inference_context = nullptr,
-                   std::shared_ptr<GreenContext> precompute_context = nullptr,
-                   int cpu_core_id = -1) 
-                                                   : device_count_{cex::DeviceCount()},
-                                                     use_gdrcopy_(use_gdrcopy),
-                                                     lenient_{lenient},
-                                                     create_stream_(create_stream),
-                                                     cpu_core_id_(cpu_core_id)
-                                                     {
+  explicit CudaEnv(
+      bool lenient = false,
+      bool create_stream = false,
+      bool use_gdrcopy = false,
+      std::shared_ptr<GreenContext> inference_context = nullptr,
+      std::shared_ptr<GreenContext> precompute_context = nullptr,
+      int cpu_core_id = -1)
+      : device_count_{cex::DeviceCount()},
+        use_gdrcopy_(use_gdrcopy),
+        lenient_{lenient},
+        create_stream_(create_stream),
+        cpu_core_id_(cpu_core_id) {
+#if !GDRCOPY_AVAILABLE
+    if (use_gdrcopy_) {
+      throw std::invalid_argument("--gdrcopy requires a build configured with -DUSE_GDRCOPY=ON");
+    }
+#endif
     if (device_count_ == 0 && !lenient) throw std::runtime_error("Missing cuda device.");
 
     if (inference_context) green_contexts_.push_back(inference_context);
@@ -105,17 +117,16 @@ class CudaEnv {
 
     StateCheck(green_contexts_.size() == 0 || green_contexts_.size() == 1 || green_contexts_.size() == 2);
 
-    if (precompute_context) { 
+    if (precompute_context) {
       precompute_context->SetCurrent();
     } else if (inference_context) {
       inference_context->SetCurrent();
     };
-  
+
     Init(create_stream);
   }
 
   void AssignContexts(GreenContextsVector green_contexts, int device_id = 0) {
-
     StateCheck(green_contexts_.size() == 0);
 
     Release(true);
@@ -132,8 +143,7 @@ class CudaEnv {
     Init(create_stream_);
   }
 
-  void ReleaseContexts(CUcontext&  primary_ctx, int device_id = 0) {
-
+  void ReleaseContexts(CUcontext &primary_ctx, int device_id = 0) {
     SetPrecomputeContext();
 
     CudaCheck(cudaDeviceSynchronize());
@@ -144,12 +154,9 @@ class CudaEnv {
     CUdevice current_device;
     CuCheck(cuDeviceGet(&current_device, device_id));
     CuCheck(cuDevicePrimaryCtxRetain(&primary_ctx, current_device));
-
   }
 
-  ~CudaEnv() {
-    Release(true);
-  }
+  ~CudaEnv() { Release(true); }
 
   // No copying
   CudaEnv(CudaEnv const &) = delete;
@@ -173,7 +180,7 @@ class CudaEnv {
     env.cuda_high_prio_stream_ = nullptr;
   }
 
-  CudaEnv &operator=(CudaEnv &&env) { // NOLINT(performance-noexcept-move-constructor)
+  CudaEnv &operator=(CudaEnv &&env) {  // NOLINT(performance-noexcept-move-constructor)
     Release();
     assert(device_count_ == env.device_count_);
     cublas_handle_ = env.cublas_handle_;
@@ -196,7 +203,14 @@ class CudaEnv {
   [[nodiscard]] auto Stream() const { return cuda_stream_.get(); };
   [[nodiscard]] auto CustomStream() const { return cuda_custom_stream_.get(); };
   [[nodiscard]] auto HighPriorityStream() const { return cuda_high_prio_stream_.get(); };
-  [[nodiscard]] auto UseGdrcopy() const { return use_gdrcopy_; };
+  [[nodiscard]] bool UseGdrcopy() const {
+#if GDRCOPY_AVAILABLE
+    return use_gdrcopy_;
+#else
+    assert(!use_gdrcopy_);
+    return false;
+#endif
+  }
 
   void CreateStreams(unsigned int num_streams, int priority = 0);
 
@@ -210,9 +224,7 @@ class CudaEnv {
 
   void JoinHighPriority(cudaEvent_t after);
 
-  auto Streams(unsigned int idx) {
-    return streams_.at(idx).get();
-  }
+  auto Streams(unsigned int idx) { return streams_.at(idx).get(); }
 
   static bool NativeAtomicSupported();
 
@@ -220,16 +232,28 @@ class CudaEnv {
 
   static int GetDevice();
 
-  int GetCpuCoreId() {return cpu_core_id_; };
+  int GetCpuCoreId() { return cpu_core_id_; };
 
   [[nodiscard]] int getPrioHigh() const { return prio_high_; }
   [[nodiscard]] int getPrioLow() const { return prio_low_; }
 
-  void SetModelContext() const { if (green_contexts_.size()) green_contexts_[0]->SetCurrent(); }
-  void SetPrecomputeContext() const { if (green_contexts_.size()) green_contexts_.back()->SetCurrent(); }
+  void SetModelContext() const {
+    if (green_contexts_.size()) green_contexts_[0]->SetCurrent();
+  }
+  void SetPrecomputeContext() const {
+    if (green_contexts_.size()) green_contexts_.back()->SetCurrent();
+  }
+  /// A new non-blocking stream in the precompute's partition of the device (its green context, if there is one).
+  [[nodiscard]] cex::StreamPtr CreatePrecomputeStream() const {
+    if (green_contexts_.size()) {
+      CUstream stream;
+      CuCheck(cuGreenCtxStreamCreate(&stream, green_contexts_.back()->get(), CU_STREAM_NON_BLOCKING, 0));
+      return cex::StreamPtr{stream};
+    }
+    return cex::CreateStream(cudaStreamNonBlocking);
+  }
 
  private:
-
   void Init(bool create_stream = true) {
     if (!lenient_ || device_count_ > 0) {
       CheckDevice();
@@ -237,14 +261,14 @@ class CudaEnv {
       CublasCheck(cublasCreate(&cublas_handle_));
       CublasCheck(cublasLtCreate(&cublaslt_handle_));
       if (create_stream) {
-        if (green_contexts_.size() >=1) {
+        if (green_contexts_.size() >= 1) {
           CUstream stream;
           CuCheck(cuGreenCtxStreamCreate(&stream, green_contexts_.back()->get(), CU_STREAM_NON_BLOCKING, 0));
           cuda_stream_ = cex::StreamPtr{stream};
           CUstream custom_stream;
           CuCheck(cuGreenCtxStreamCreate(&custom_stream, green_contexts_[0]->get(), CU_STREAM_NON_BLOCKING, 0));
           cuda_custom_stream_ = cex::StreamPtr{custom_stream};
-        
+
         } else {
           cuda_stream_ = cex::CreateStream();
           cuda_custom_stream_ = cex::CreateStream();

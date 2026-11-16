@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 #include "ss_gemv_impl/kernel_traits.h"
 
@@ -24,14 +25,31 @@ struct ModelConfig final {
 
   std::optional<Algo> algorithm{};
   ssgemv::Data_kind data_type = ssgemv::DATA_TYPE_FP16;  // FP16, FP32, or BF16
-  bool pre_compute = false;                               // enable pre-computation compliant with the "new" rules of the benchmark
+  bool pre_compute = false;  // enable pre-computation compliant with the "new" rules of the benchmark
 
-  bool use_cublas_lt = false;                      // allows to fine-tune gemms
-  bool paged_input = false;                        // use paged memory for input on GH
-  bool skip_scalar_product_in_precompute = false;  // the computation is redundant in precompute
-  bool as_supported = false;                       // if spinning kernels are used
+  bool use_cublas_lt = false;  // allows to fine-tune gemms
+  /// Cache file of tuned cublasLt algorithms (nvLstmSingleStepGemmTune, single_step/lt_algo_cache.h); empty: none.
+  std::string lt_algo_cache;
+  bool paged_input = false;   // use paged memory for input on GH
+  bool as_supported = false;  // if spinning kernels are used
   int as_suggested_cluster_size = 16;
-  bool use_gdrcopy = false;                        // use gdrcopy for signaling in persistent kernels
+  bool use_gdrcopy = false;  // use gdrcopy for signaling in persistent kernels
+  /// FP16 lstm_m runs with the FP16 register-resident kernel (USE_FP16_REG_KERNELS); main.cu decides, as it depends on
+  /// the number of instances that fit.
+  bool fp16_reg_m = false;
+  // the precompute graph runs on a single stream (no fork/join nodes); main.cu enables it for persistent kernels
+  bool precompute_single_stream = false;
+  /// The persistent FP16 lstm_s / lstm_m models' precompute is the resident SingleStep kernel
+  /// (USE_SINGLE_STEP_RESIDENT, single_step/single_step_resident.cuh), which the inference kernel waits on, instead of
+  /// the cuBLAS graph per step.
+  bool precompute_resident = false;
+  /// Its CTAs over the window steps per tile of units (--precompute-step-splits): more CTAs per pass, a shorter pass.
+  int precompute_step_splits = 1;
+  /// The persistent FP16 lstm_l model's FP16 register kernel is captured at the root of each step's precompute graph,
+  /// which takes layer 0's W * x from it (USE_FP16_REG_L_GRAPH, --lstm-l-in-graph); steps_per_graph steps (1 or even)
+  /// per graph launch (--steps-per-graph).
+  bool lstm_l_in_graph = false;
+  unsigned steps_per_graph = 1;
   bool ping_pong_model_persistent = false;
   int max_shared_mem_per_block = 0;
   int sm_count = 0;

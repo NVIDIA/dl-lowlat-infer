@@ -27,7 +27,6 @@ namespace nvidia::quant::lowlat_infer {
 
 class ModelInstance {
  public:
-
   enum class State {
     kStopped,
     kPreProcess,
@@ -43,19 +42,21 @@ class ModelInstance {
   using AnyDataIterator = std::variant<PinnedDataIteratorPtr16, PinnedDataIteratorPtr32>;
   using ModelVector = std::vector<std::unique_ptr<ModelInterface>>;
 
-  ModelInstance(ModelVector&& models,
-                AnyDataIterator&& data,
-                std::size_t init_capacity = InferenceResult::kDefaultCapacity,
-                bool stage = false,
-                std::optional<bool> use_omp = std::nullopt,
-                bool reap = true);
+  ModelInstance(
+      ModelVector&& models,
+      AnyDataIterator&& data,
+      std::size_t init_capacity = InferenceResult::kDefaultCapacity,
+      bool stage = false,
+      std::optional<bool> use_omp = std::nullopt,
+      bool reap = true);
 
-  ModelInstance(std::unique_ptr<ModelInterface>&& model,
-                AnyDataIterator&& data,
-                std::size_t init_capacity = InferenceResult::kDefaultCapacity,
-                bool stage = false,
-                std::optional<bool> use_omp = std::nullopt,
-                bool reap = true)
+  ModelInstance(
+      std::unique_ptr<ModelInterface>&& model,
+      AnyDataIterator&& data,
+      std::size_t init_capacity = InferenceResult::kDefaultCapacity,
+      bool stage = false,
+      std::optional<bool> use_omp = std::nullopt,
+      bool reap = true)
       : ModelInstance{WrapModel(std::move(model)), std::move(data), init_capacity, stage, use_omp, reap} {}
 
   void Start();
@@ -80,18 +81,17 @@ class ModelInstance {
   [[nodiscard]] std::shared_ptr<InferenceResult const> ResultShared() const { return result_; }
   [[nodiscard]] bool UseOmp() const { return use_omp_; }
 
-  static std::unique_ptr<ModelInterface> CreateModel(ModelDef const& model_def,
-                                                     CudaEnv& cuda_env,
-                                                     std::uint32_t batch_size,
-                                                     ModelConfig const& config);
+  static std::unique_ptr<ModelInterface> CreateModel(
+      ModelDef const& model_def, CudaEnv& cuda_env, std::uint32_t batch_size, ModelConfig const& config);
 
-  static std::unique_ptr<ModelInterface> CreateModel(std::filesystem::path const& path,
-                                                     CudaEnv& cuda_env,
-                                                     std::uint32_t batch_size = 1,
-                                                     ModelConfig const& config = {});
+  static std::unique_ptr<ModelInterface> CreateModel(
+      std::filesystem::path const& path,
+      CudaEnv& cuda_env,
+      std::uint32_t batch_size = 1,
+      ModelConfig const& config = {});
 
-  void SetModelId(std::uint32_t id) {model_id_ = id;};
-  std::uint32_t GetModelId() { return model_id_;};
+  void SetModelId(std::uint32_t id) { model_id_ = id; };
+  std::uint32_t GetModelId() { return model_id_; };
 
  private:
   using Clock = InferenceResult::Clock;
@@ -110,9 +110,7 @@ class ModelInstance {
   void Stage();
   bool TryOpenMp();
 
-  [[nodiscard]] inline std::uint32_t NextModelIndex(std::uint32_t idx) const {
-    return (idx + 1) % num_models_;
-  }
+  [[nodiscard]] inline std::uint32_t NextModelIndex(std::uint32_t idx) const { return (idx + 1) % num_models_; }
 
   ModelVector models_;
   std::size_t const num_models_;

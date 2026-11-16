@@ -4,8 +4,7 @@ include(FetchContent)
 FetchContent_Declare(
     gdrcopy
     GIT_REPOSITORY https://github.com/NVIDIA/gdrcopy.git
-    GIT_TAG        v2.5.1
-)
+    GIT_TAG v2.6)
 
 FetchContent_GetProperties(gdrcopy)
 if(NOT gdrcopy_POPULATED)
@@ -31,33 +30,29 @@ find_program(MAKE_EXECUTABLE NAMES make REQUIRED)
 include(ProcessorCount)
 ProcessorCount(NPROC)
 if(NPROC EQUAL 0)
-  set(NPROC 1)
+    set(NPROC 1)
 endif()
 
+# The library only: nvLstmInf links libgdrapi and uses none of GDRCopy's test and benchmark programs, which do not link
+# with every toolchain (objects without -fPIC against a default-PIE g++, e.g. g++ 16 on aarch64; the test suite does not
+# compile with clang). lib_install below, not install, which would build them again.
 execute_process(
-    COMMAND ${MAKE_EXECUTABLE}
-       -j${NPROC}
-        prefix=${GDRCOPY_BUILD_DIR}
-        config lib exes
+    COMMAND ${MAKE_EXECUTABLE} -j${NPROC} prefix=${GDRCOPY_BUILD_DIR} config lib
     WORKING_DIRECTORY ${GDRCOPY_SOURCE_DIR}
     RESULT_VARIABLE BUILD_RESULT
     OUTPUT_VARIABLE BUILD_OUTPUT
-    ERROR_VARIABLE BUILD_ERROR
-)
+    ERROR_VARIABLE BUILD_ERROR)
 
 if(NOT BUILD_RESULT EQUAL 0)
-  message(FATAL_ERROR "gdrcopy build failed:\nOutput:\n${BUILD_OUTPUT}\nError:\n${BUILD_ERROR}")
+    message(FATAL_ERROR "gdrcopy build failed:\nOutput:\n${BUILD_OUTPUT}\nError:\n${BUILD_ERROR}")
 else()
-  message(STATUS "gdrcopy build output:\n${BUILD_OUTPUT}")
+    message(STATUS "gdrcopy build output:\n${BUILD_OUTPUT}")
 endif()
 
 execute_process(
-    COMMAND ${MAKE_EXECUTABLE}
-        prefix=${GDRCOPY_BUILD_DIR}
-        install
+    COMMAND ${MAKE_EXECUTABLE} prefix=${GDRCOPY_BUILD_DIR} lib_install
     WORKING_DIRECTORY ${GDRCOPY_SOURCE_DIR}
-    RESULT_VARIABLE INSTALL_RESULT
-)
+    RESULT_VARIABLE INSTALL_RESULT)
 
 if(NOT INSTALL_RESULT EQUAL 0)
     message(FATAL_ERROR "gdrcopy install failed")
@@ -76,10 +71,12 @@ target_include_directories(gdrcopy INTERFACE ${GDRCOPY_INCLUDE_DIR})
 target_link_libraries(gdrcopy INTERFACE ${GDRCOPY_LIBRARY})
 target_link_directories(gdrcopy INTERFACE ${GDRCOPY_LIB_DIR})
 
-# Install gdrcopy relative to CMAKE_INSTALL_PREFIX
-# Default: "../gdrcopy" -> installs to ${CMAKE_INSTALL_PREFIX}/../gdrcopy
-# Example: if CMAKE_INSTALL_PREFIX=/app/dl-lowlat-infer -> gdrcopy goes to /app/gdrcopy
-set(GDRCOPY_INSTALL_DIR "../gdrcopy" CACHE PATH "Installation directory for gdrcopy (relative to CMAKE_INSTALL_PREFIX)")
+# Install gdrcopy relative to CMAKE_INSTALL_PREFIX Default: "../gdrcopy" -> installs to
+# ${CMAKE_INSTALL_PREFIX}/../gdrcopy Example: if CMAKE_INSTALL_PREFIX=/app/dl-lowlat-infer -> gdrcopy goes to
+# /app/gdrcopy
+set(GDRCOPY_INSTALL_DIR
+    "../gdrcopy"
+    CACHE PATH "Installation directory for gdrcopy (relative to CMAKE_INSTALL_PREFIX)")
 
 # Determine absolute install path for display and RPATH
 if(IS_ABSOLUTE ${GDRCOPY_INSTALL_DIR})
@@ -92,8 +89,9 @@ endif()
 # Export for use in other CMakeLists.txt files
 set(GDRCOPY_INSTALL_LIB_PATH ${GDRCOPY_INSTALL_PATH}/lib)
 
-install(DIRECTORY ${GDRCOPY_BUILD_DIR}/
-        DESTINATION ${GDRCOPY_INSTALL_DIR}
-        USE_SOURCE_PERMISSIONS)
+install(
+    DIRECTORY ${GDRCOPY_BUILD_DIR}/
+    DESTINATION ${GDRCOPY_INSTALL_DIR}
+    USE_SOURCE_PERMISSIONS)
 
 message(STATUS "GDRCopy will be installed to: ${GDRCOPY_INSTALL_PATH}")

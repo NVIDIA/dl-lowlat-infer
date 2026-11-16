@@ -22,6 +22,31 @@ When `as_supported=false`:
 - Kernel still does multiple layers in a single computation without additional weights loading/unloading.
 - Required because lstm_l needs to unload the model to perform precompute
 - Future releases will implement precompute more efficiently to enable always-spinning mode
+- In a build with `USE_FP16_REG_L_GRAPH` (on by default on x86), FP16 `lstm_l` by default captures the kernel at the
+  root of its step's precompute graph (`--lstm-l-in-graph=0`: off), so that a step is one graph launch, and
+  `--steps-per-graph=N` puts N steps in one graph (by default 8)
+  (`ss_gemv_impl/fp16_reg/README.md`). The timed step is the same; the host's work per step and the gap between the
+  kernel and the precompute (and so the throughput) are not.
+
+### FP16 Register-Resident Kernels
+By default (CMake `USE_FP16_REG_KERNELS`; `-DUSE_FP16_REG_KERNELS=OFF` keeps the kernels above), FP16 runs use the
+kernels of `ss_gemv_impl/fp16_reg/` (README.md there) instead: lstm_s on one CTA in always-spinning mode (launched per
+iteration, it keeps the older single-block kernel above, `gemv_lstm_bp_impl.cu`), lstm_m on 8 CTAs in one cluster in
+always-spinning mode, lstm_l on several CTAs launched per iteration, every weight on chip and FP16 math. They follow
+the same timing conventions and host signals as the kernels above. lstm_m and lstm_l use them only if all of their CTAs
+fit the device at once; otherwise they run the older cluster and device-wide kernels above (`gemv_lstm_tbc_impl.cu`,
+`gemv_lstm_dev_impl.cu`). FP32 and BF16 runs keep the kernels above.
+
+### Resident Precompute
+In always-spinning mode the next step's states come from the precompute (`ModelSingleStep`, a cuBLAS graph per step) and
+reach the kernel with two host signals per step: the first releases the states, which the kernel loads and acknowledges
+outside the timed step; the second starts the step. Built with `USE_SINGLE_STEP_RESIDENT` (on by default on x86), FP16
+lstm_s / lstm_m by default instead run the precompute as a second resident kernel per instance (`--precompute-resident=0`:
+off; where it does not fit, the cuBLAS precompute)
+(`single_step/README.md`): it publishes each step's states into one of two slots with a ready word, the FP16 register
+kernel loads them as soon as the ready word says so, and the host gives one signal per step, the step's start. The timed
+step is the same; the host's work per step (and so the throughput) is not. INIT is acknowledged by every CTA, and the
+host waits for it before the next step.
 
 ## High-Level Timing Workflow
 
@@ -63,9 +88,13 @@ On PCIe systems, `compare_exchange_strong` is NOT guaranteed to work reliably. I
 - Both CPU and GPU toggle the switch after each barrier
 - Functions: `gpu_cpu_sync_part_1_no_aex()` and `poll_load()` in gemv_lstm_utils.cuh
 
-System architecture is automatically detected at compile time (see kernel_params.h and util.h):
+By default the system architecture is detected at compile time (see kernel_params.h and util.h):
 - PCIe systems (x86_64): `DISABLE_ATOMIC_EXCHANGE=1`
 - Grace Hopper (aarch64): `DISABLE_ATOMIC_EXCHANGE=0`
+
+A build with `USE_SINGLE_STEP_RESIDENT` or `USE_FP16_REG_L_GRAPH` sets `DISABLE_ATOMIC_EXCHANGE=1` on every platform
+(top-level CMakeLists.txt): both need the switch protocol. They are on by default (`AUTO`) only on x86, so this
+changes the protocol on Grace Hopper only when they are turned on with `=ON` (see `single_step/README.md`).
 
 ## Device Side Signaling
 

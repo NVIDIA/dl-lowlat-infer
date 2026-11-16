@@ -7,11 +7,10 @@
 
 #include "util.h"
 
-#include <npy.h>
-#include <pthread.h>
-
 #include <cstdio>
 #include <cstring>
+#include <npy.h>
+#include <pthread.h>
 #include <stdexcept>
 #include <vector>
 
@@ -24,22 +23,18 @@ using namespace nvidia::quant::lowlat_infer::util;
 // cache pollution. If the cache line containing address mem_addr is already in
 // the cache, the cache will be updated.
 // https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm_stream_si64
-void _mm_stream_si64(long long *p, long long a)
-{
-    vst1_s64((int64_t *) p, vdup_n_s64((int64_t) a));
-}
+void _mm_stream_si64(long long *p, long long a) { vst1_s64((int64_t *)p, vdup_n_s64((int64_t)a)); }
 
 // Perform a serializing operation on all store-to-memory instructions that were
 // issued prior to this instruction. Guarantees that every store instruction
 // that precedes, in program order, is globally visible before any store
 // instruction which follows the fence in program order.
 // https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm_sfence
-void _mm_sfence(void)
-{
+void _mm_sfence(void) {
   do {
     __asm__ __volatile__("" ::: "memory");
-    (void) 0;
-  }while(0);
+    (void)0;
+  } while (0);
   std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 #endif

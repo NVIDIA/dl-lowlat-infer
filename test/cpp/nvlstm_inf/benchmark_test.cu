@@ -5,9 +5,8 @@
  */
 /* clang-format on */
 
-#include <gtest/gtest.h>
-
 #include <filesystem>
+#include <gtest/gtest.h>
 #include <tuple>
 #include <utility>
 
@@ -82,9 +81,8 @@ TEST_P(BenchmarkParamTest, Run) {
   EXPECT_EQ(count, num_instances);
 }
 
-INSTANTIATE_TEST_SUITE_P(BatchSizeTests,
-                         BenchmarkParamTest,
-                         ::testing::Values(Param{1, 1, false, false},
-                                           Param{8, 1, true, true},
-                                           Param{1, 1, false, true},
-                                           Param{8, 1, false, false}));
+INSTANTIATE_TEST_SUITE_P(
+    BatchSizeTests,
+    BenchmarkParamTest,
+    ::testing::Values(
+        Param{1, 1, false, false}, Param{8, 1, true, true}, Param{1, 1, false, true}, Param{8, 1, false, false}));

@@ -12,3 +12,10 @@
 /gdrdrv/mod-*/gdrdrv.ko
 # Models data
 /data*/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Python virtual environment
+.venv/

@@ -5,21 +5,20 @@
  */
 /* clang-format on */
 
-#include <omp.h>
-
 #include <algorithm>
 #include <cstring>
+#include <omp.h>
 #include <stdexcept>
 
 #ifdef USE_NVTX
 #include <nvtx3/nvtx3.hpp>
 #endif
 
+#include "ModelAsSingleStepGemv.cuh"
 #include "ModelDef.h"
 #include "ModelInstance.cuh"
 #include "ModelSingleStep.cuh"
 #include "ModelSingleStepGemv.cuh"
-#include "ModelAsSingleStepGemv.cuh"
 #include "PingPongModelPersistent.cuh"
 #include "ss_gemv_impl/kernel_traits.h"
 #include "util.h"
@@ -32,12 +31,13 @@ nvtx3::registered_string const kGraphLaunchRange{"graph_launch"};
 
 namespace nvidia::quant::lowlat_infer {
 
-ModelInstance::ModelInstance(ModelVector&& models,
-                             AnyDataIterator&& data,
-                             std::size_t init_capacity,
-                             bool stage,
-                             std::optional<bool> use_omp,
-                             bool reap)
+ModelInstance::ModelInstance(
+    ModelVector&& models,
+    AnyDataIterator&& data,
+    std::size_t init_capacity,
+    bool stage,
+    std::optional<bool> use_omp,
+    bool reap)
     : models_{std::move(models)},
       num_models_(models_.size()),
       model_{models_.at(0)},
@@ -60,8 +60,7 @@ ModelInstance::ModelInstance(ModelVector&& models,
       nvtx_ranges_{num_models_},
 #endif
       reap_{reap},
-      states_(num_models_, State::kInitialized)
-{
+      states_(num_models_, State::kInitialized) {
   StateCheck(!holds_half_ || is_half_);
   StateCheck(holds_half_ || std::holds_alternative<PinnedDataIteratorPtr32>(data_));
   StateCheck(!holds_half_ || std::get<PinnedDataIteratorPtr16>(data_));
@@ -83,7 +82,6 @@ ModelInstance::ModelInstance(ModelVector&& models,
   }
   auto const batch_size = model_->BatchSize();
   for (std::size_t i = 0; i < num_models_; ++i) {
-
     input_[i] = cex::MallocHost<void const*>(batch_size);
     output_[i] = cex::MallocHost<float>(batch_size);
 
@@ -127,7 +125,6 @@ void ModelInstance::Finalize() {
 }
 
 bool ModelInstance::Inference() {
-
   auto const idx_model = next_to_launch_;
 
   auto& model_to_launch = models_[idx_model];
@@ -158,7 +155,6 @@ bool ModelInstance::Inference() {
     }
   }
 
-
   StateCheck(model_state == State::kInference);
 
 #ifdef USE_NVTX
@@ -176,6 +172,7 @@ bool ModelInstance::Inference() {
   --ready_to_launch_;
   next_to_launch_ = NextModelIndex(idx_model);
   spsc_.NotifyConsumed();
+  model_to_launch->PostLaunch();
   result_->Reserve(batch_size);
 
   // Distribute inputs to all sliding window models
@@ -240,10 +237,10 @@ bool ModelInstance::Loop(bool may_launch) {
             } else {
               allStopped = false;
             }
-          }  else {
+          } else {
             allStopped = false;
           }
-          if ((states_[idx] == State::kPreProcess || states_[idx] == State::kInference)  && may_launch && !allStopped) {
+          if ((states_[idx] == State::kPreProcess || states_[idx] == State::kInference) && may_launch && !allStopped) {
             return Inference();
           }
         }
@@ -290,8 +287,7 @@ std::unique_ptr<ModelInterface> MakeModel(
     return std::make_unique<PingPongModelPersistent<TData>>(cuda_env, model_def, batch_size, config);
   }
 
-  if (config.algorithm == ModelConfig::Algo::SingleStep ||
-      config.algorithm == ModelConfig::Algo::SingleStepStreaming) {
+  if (config.algorithm == ModelConfig::Algo::SingleStep || config.algorithm == ModelConfig::Algo::SingleStepStreaming) {
     return std::make_unique<ModelSingleStep<TData>>(cuda_env, model_def, config);
   }
 
@@ -307,10 +303,8 @@ std::unique_ptr<ModelInterface> MakeModel(
 
 }  // namespace
 
-std::unique_ptr<ModelInterface> ModelInstance::CreateModel(ModelDef const& model_def,
-                                                           CudaEnv& cuda_env,
-                                                           std::uint32_t batch_size,
-                                                           ModelConfig const& config) {
+std::unique_ptr<ModelInterface> ModelInstance::CreateModel(
+    ModelDef const& model_def, CudaEnv& cuda_env, std::uint32_t batch_size, ModelConfig const& config) {
   switch (config.Type()) {
     case ssgemv::DATA_TYPE_FP32:
       return MakeModel<float>(model_def, cuda_env, batch_size, config);
@@ -323,10 +317,8 @@ std::unique_ptr<ModelInterface> ModelInstance::CreateModel(ModelDef const& model
   }
 }
 
-std::unique_ptr<ModelInterface> ModelInstance::CreateModel(std::filesystem::path const& path,
-                                                           CudaEnv& cuda_env,
-                                                           std::uint32_t batch_size,
-                                                           ModelConfig const& config) {
+std::unique_ptr<ModelInterface> ModelInstance::CreateModel(
+    std::filesystem::path const& path, CudaEnv& cuda_env, std::uint32_t batch_size, ModelConfig const& config) {
   return CreateModel(ModelDef{path.c_str()}, cuda_env, batch_size, config);
 }
 
@@ -337,6 +329,7 @@ void ModelInstance::Reset() {
   Initialize();
 }
 
+// clang-format off
 #define ForAllBatches(operation) \
   for (std::uint32_t i = 0; i < batch_size; ++i) operation
 
@@ -357,6 +350,8 @@ void ModelInstance::Reset() {
   } else {                                                                                                   \
     ForAllBatches(operation)                                                                                 \
   }
+
+// clang-format on
 
 void ModelInstance::Stage() {
   auto const batch_size = model_->BatchSize();
@@ -449,10 +444,12 @@ bool ModelInstance::TryOpenMp() {
   }
 }
 ModelInstance::VoidIterator ModelInstance::CreateVoidIterator(ModelInstance::AnyDataIterator& data) {
-  return std::visit([](auto& dataIterator) {
-    auto ptr = dataIterator.get();
-    return VoidIterator{[ptr]() { return static_cast<void const*>(ptr->Next()); }};
-  }, data);
+  return std::visit(
+      [](auto& dataIterator) {
+        auto ptr = dataIterator.get();
+        return VoidIterator{[ptr]() { return static_cast<void const*>(ptr->Next()); }};
+      },
+      data);
 }
 
 }  // namespace nvidia::quant::lowlat_infer

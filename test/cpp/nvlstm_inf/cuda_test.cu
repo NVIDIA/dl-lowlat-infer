@@ -5,10 +5,9 @@
  */
 /* clang-format on */
 
-#include <gtest/gtest.h>
-
 #include <cuda/std/chrono>
 #include <cuda/std/semaphore>
+#include <gtest/gtest.h>
 #include <nvlstm_inf/CudaEnv.cuh>
 #include <thread>
 
@@ -61,7 +60,7 @@ TEST_F(CudaTest, SingleProducerSingleConsumer) {
     EXPECT_TRUE(spsc.TryConsume(mem_acq_rel));
     EXPECT_FALSE(spsc.TryConsume(mem_acq_rel));
 
-    std::thread wait_for_notify{[&spsc, &semaphore](){
+    std::thread wait_for_notify{[&spsc, &semaphore]() {
       spsc.WaitToProduce(mem_acq_rel);
       spsc.WaitToConsume(mem_acq_rel);
       semaphore.release();
@@ -76,11 +75,13 @@ TEST_F(CudaTest, SingleProducerSingleConsumer) {
 
     spsc.WaitToConsume(stream, mem_acq_rel);
     spsc.WaitToProduce(stream, mem_acq_rel);
-    std::thread wait_for_spin{[&spsc, &semaphore](){
+    std::thread wait_for_spin{[&spsc, &semaphore]() {
       spsc.NotifyConsumed(mem_release);
       spsc.NotifyProduced(mem_release);
-      while (spsc.CanProduce(mem_acquire)) {}
-      while (spsc.CanConsume(mem_acquire)) {}
+      while (spsc.CanProduce(mem_acquire)) {
+      }
+      while (spsc.CanConsume(mem_acquire)) {
+      }
       semaphore.release();
     }};
     ASSERT_TRUE(semaphore.try_acquire_for(1s));
@@ -112,7 +113,7 @@ TEST_F(CudaTest, VolatileStoreSpinHost) {
   EXPECT_FALSE(*flag);
   auto stream = cuda_env_->Stream();
   cex::spsc::Store(flag.get(), true, stream);
-  while(!*flag) {
+  while (!*flag) {
     std::this_thread::yield();
   }
 }

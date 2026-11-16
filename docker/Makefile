@@ -18,6 +18,7 @@ CMAKE_BUILD_TYPE   ?=
 CPU_ARCH           ?=
 CUDA_ARCHS         ?=
 BUILD_TESTS        ?=
+USE_GDRCOPY        ?=
 
 # gdrcopy variables
 MAKEFILE_DIR   ?= $(dir $(lastword $(MAKEFILE_LIST)))
@@ -39,6 +40,7 @@ endef
 		$(if $(CPU_ARCH), --build-arg CPU_ARCH=$(CPU_ARCH)) \
 		$(if $(CUDA_ARCHS), --build-arg CUDA_ARCHS="$(CUDA_ARCHS)") \
 		$(if $(BUILD_TESTS), --build-arg BUILD_TESTS=$(BUILD_TESTS)) \
+		$(if $(USE_GDRCOPY), --build-arg USE_GDRCOPY=$(USE_GDRCOPY)) \
 		$(if $(APP_DIR), --build-arg APP_DIR=$(APP_DIR)) \
 		$(if $(SRC_DIR), --build-arg SRC_DIR=$(SRC_DIR)) \
 		$(if $(GDRCOPY_DIR), --build-arg GDRCOPY_DIR=$(GDRCOPY_DIR)) \
@@ -127,7 +129,7 @@ test_%: STAGE = cmake
 test_%: BUILD_TESTS = ON
 test_%: DOCKER_TAG = test-$(NGC_TAG)
 test_run: RUN_CMD = bash -c "cd $(SRC_DIR)/build && ctest --output-on-failure"
-test_run: CODE_VOLUME = 
+test_run: CODE_VOLUME =
 
 models_%: STAGE = models
 
